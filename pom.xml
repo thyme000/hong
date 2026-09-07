@@ -16,6 +16,8 @@
     <description>hong</description>
     <modules>
         <module>tool</module>
+        <module>memory</module>
+        <module>memory-db</module>
         <module>bootstrap</module>
     </modules>
     <properties>

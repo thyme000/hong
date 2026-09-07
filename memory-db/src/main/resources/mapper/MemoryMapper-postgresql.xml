@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.thyme.memory.db.MemoryMapper">
+
+    <!-- PostgreSQL 方言：ON CONFLICT 做 upsert -->
+    <insert id="upsert" databaseId="postgresql">
+        INSERT INTO memory_record (id, content, metadata)
+        VALUES (#{id}, #{content}, #{metadata})
+        ON CONFLICT (id) DO UPDATE SET content = #{content}, metadata = #{metadata}
+    </insert>
+
+    <!-- PostgreSQL 方言：->> 提取 JSON 文本 -->
+    <select id="query" databaseId="postgresql" resultType="cn.thyme.memory.db.MemoryRow">
+        SELECT id, content, metadata FROM memory_record
+        <where>
+            <foreach collection="filters" item="f">
+                AND metadata->>'${f.key}' = #{f.value}
+            </foreach>
+        </where>
+        ORDER BY id
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+</mapper>
