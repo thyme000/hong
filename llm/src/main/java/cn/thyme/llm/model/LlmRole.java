@@ -1,4 +1,4 @@
-package cn.thyme.bootstrap.llm.model;
+package cn.thyme.llm.model;
 
 public enum LlmRole {
     SYSTEM,

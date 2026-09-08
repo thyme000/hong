@@ -1,4 +1,4 @@
-package cn.thyme.bootstrap.llm.model;
+package cn.thyme.llm.model;
 
 public class LlmException extends RuntimeException {
 

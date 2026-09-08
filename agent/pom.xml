@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>cn.thyme</groupId>
+        <artifactId>hong</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>agent</artifactId>
+    <name>agent</name>
+    <description>Agent 抽象与基础 agent loop：模型调用、工具循环与上下文隔离</description>
+    <dependencies>
+        <dependency>
+            <groupId>cn.thyme</groupId>
+            <artifactId>llm</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.thyme</groupId>
+            <artifactId>tool</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,7 +1,7 @@
-package cn.thyme.bootstrap.llm;
+package cn.thyme.llm;
 
-import cn.thyme.bootstrap.llm.model.LlmRequest;
-import cn.thyme.bootstrap.llm.model.LlmResponse;
+import cn.thyme.llm.model.LlmRequest;
+import cn.thyme.llm.model.LlmResponse;
 
 /**
  * 厂商无关的 LLM 调用入口。实现类负责把 {@link LlmRequest} 翻译成各自厂商的协议；

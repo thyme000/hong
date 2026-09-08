@@ -1,4 +1,4 @@
-package cn.thyme.bootstrap.llm;
+package cn.thyme.llm;
 
 import java.util.Map;
 import java.util.Optional;
