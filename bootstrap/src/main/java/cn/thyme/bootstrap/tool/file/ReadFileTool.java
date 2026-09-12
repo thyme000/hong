@@ -36,8 +36,9 @@ public class ReadFileTool implements Tool {
 
     @Override
     public String description() {
-        return "读取当前会话中已上传文件的内容。文件名用 list_files 返回的原始名，"
-                + "支持按行范围分页与按字符数截断。";
+        return "读取当前会话中已上传文件的内容。不传 offset/limit 时返回全文；"
+                + "需要分页时用 offset（起始行，从 1 开始）与 limit（读取行数）。"
+                + "返回内容末尾会标明本次读取的行范围与文件总行数，据此判断是否已读完。";
     }
 
     @Override
@@ -76,20 +77,48 @@ public class ReadFileTool implements Tool {
         }
 
         try {
+            Integer offset = toInt(args.get("offset"));
+            Integer limit = toInt(args.get("limit"));
             FileReadResult result = FileReadService.read(
                     workspace.readText(context.sessionId(), String.valueOf(path)),
                     toInt(args.get("maxSize")),
-                    toInt(args.get("offset")),
-                    toInt(args.get("limit")));
+                    offset,
+                    limit);
 
-            String text = result.content();
-            if (result.truncated()) {
-                text += "\n[已截断：内容超过大小上限]";
-            }
-            return ToolResult.success(text, result);
+            return ToolResult.success(result.content() + footer(result, offset), result);
         } catch (WorkspaceException e) {
             return ToolResult.failure(e.getMessage());
         }
+    }
+
+    /**
+     * 返回内容末尾的行范围说明。模型据此判断「是否已读到结尾」——
+     * 缺少这个信号时，模型无法区分「全文就这么多」与「后面还有」，会反复重读同一文件。
+     *
+     * <p>截断与分页是两种不同的「没读完」：前者是字符数到了上限，该用更大的 maxSize 重读；
+     * 后者是行范围没覆盖到末尾，该用 offset 续读。提示要区分开，否则会给出错误指引。</p>
+     */
+    private static String footer(FileReadResult result, Integer offset) {
+        int total = result.totalLines();
+        if (total == 0) {
+            return "\n[文件为空]";
+        }
+        if (result.returnedLines() == 0) {
+            return "\n[起始行 " + (offset == null ? 1 : offset) + " 超出文件末尾，共 " + total + " 行]";
+        }
+
+        int first = offset == null ? 1 : offset;
+        String range = "本次返回第 " + first + "-" + (first + result.returnedLines() - 1) + " 行";
+
+        if (result.truncated()) {
+            return "\n[未读完：" + range + "，内容被大小上限截断；"
+                    + "可用更大的 maxSize 重读以获取完整内容]";
+        }
+        if (first + result.returnedLines() - 1 >= total) {
+            return "\n[已达文件末尾：共 " + total + " 行，" + range + "]";
+        }
+        return "\n[未读完：" + range + "，共 " + total + " 行；继续读请用 offset="
+                + (first + result.returnedLines()) + "]";
     }
 
     private static Integer toInt(Object value) {
