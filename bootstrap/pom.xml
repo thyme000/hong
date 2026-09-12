@@ -17,6 +17,26 @@
             <artifactId>tool</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>cn.thyme</groupId>
+            <artifactId>llm</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.thyme</groupId>
+            <artifactId>agent</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.thyme</groupId>
+            <artifactId>memory-db</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.thyme</groupId>
+            <artifactId>memory</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -35,7 +55,20 @@
     </dependencies>
 
     <build>
+        <!-- 资源过滤：把 @...@ 占位符替换为 Maven 属性（application.yml 用它锚定项目根路径）。
+             分隔符 @ 来自 spring-boot-starter-parent 的 pluginManagement，
+             但子模块须显式声明该插件才会生效。 -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

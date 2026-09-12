@@ -33,7 +33,6 @@ build/
 .vscode/
 
 ### 配置文件
-application.yml
 application-local.yml
 application-local.yaml
 
@@ -47,3 +46,10 @@ application-local.yaml
 ### 日志
 *.log
 logs/
+
+temp
+
+# 运行时数据：SQLite 库与会话沙箱（锚定在项目根）
+/data/
+
+.claude

@@ -8,7 +8,7 @@ import java.util.Optional;
 /**
  * 工具门面：对外的唯一入口。合并内部工具与外部 MCP 工具，
  * 提供"有哪些工具"（{@link #describe()}）、按任务选工具（{@link #select(TaskContext)}）
- * 与执行（{@link #execute(String, java.util.Map)}）。
+ * 与执行（{@link #execute(String, java.util.Map, ToolContext)}）。
  */
 public interface ToolManager {
 
@@ -24,8 +24,13 @@ public interface ToolManager {
     /** 按任务需求选择工具。 */
     List<ToolInfo> select(TaskContext task);
 
-    /** 按名称执行工具（同步等待结果）。 */
-    ToolResult execute(String name, java.util.Map<String, Object> args);
+    /** 按名称执行工具（同步等待结果），不带会话上下文。 */
+    default ToolResult execute(String name, java.util.Map<String, Object> args) {
+        return execute(name, args, ToolContext.none());
+    }
+
+    /** 按名称执行工具（同步等待结果），context 提供本次调用的环境（如所属会话）。 */
+    ToolResult execute(String name, java.util.Map<String, Object> args, ToolContext context);
 
     /** 按名称查找工具信息。 */
     Optional<ToolInfo> find(String name);

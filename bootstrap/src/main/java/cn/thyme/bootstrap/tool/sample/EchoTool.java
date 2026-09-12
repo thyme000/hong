@@ -2,6 +2,7 @@ package cn.thyme.bootstrap.tool.sample;
 
 import cn.thyme.tool.ExecutionMode;
 import cn.thyme.tool.Tool;
+import cn.thyme.tool.ToolContext;
 import cn.thyme.tool.ToolMark;
 import cn.thyme.tool.ToolResult;
 import org.springframework.stereotype.Component;
@@ -40,7 +41,7 @@ public class EchoTool implements Tool {
     }
 
     @Override
-    public ToolResult execute(Map<String, Object> args) {
+    public ToolResult execute(Map<String, Object> args, ToolContext context) {
         Object text = args.get("text");
         return ToolResult.success(String.valueOf(text));
     }

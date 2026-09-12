@@ -18,6 +18,9 @@ public interface MemoryMapper {
 
     int deleteById(@Param("id") String id);
 
+    /** 按筛选条件批量删除，返回删除行数。方言差异在 XML 中区分。 */
+    int deleteWhere(@Param("filters") List<FilterParam> filters);
+
     List<MemoryRow> query(@Param("filters") List<FilterParam> filters,
                           @Param("offset") int offset,
                           @Param("limit") int limit);

@@ -21,4 +21,14 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
+    <!-- PostgreSQL 方言：按 JSON 字段条件批量删除 -->
+    <delete id="deleteWhere" databaseId="postgresql">
+        DELETE FROM memory_record
+        <where>
+            <foreach collection="filters" item="f">
+                AND metadata->>'${f.key}' = #{f.value}
+            </foreach>
+        </where>
+    </delete>
+
 </mapper>

@@ -1,6 +1,9 @@
 package cn.thyme.tool;
 
+import cn.thyme.tool.security.Capability;
+
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 工具的统一定义。内部工具直接实现本接口；MCP 工具通过适配器包装成本接口，
@@ -21,6 +24,11 @@ public interface Tool {
     /** 入参的 JSON Schema（Map 形式，与 MCP 对齐）。 */
     Map<String, Object> inputSchema();
 
-    /** 执行工具并返回统一结果。 */
-    ToolResult execute(Map<String, Object> args);
+    /** 工具声明的能力（客观事实），供安全策略评估风险。默认无能力。 */
+    default Set<Capability> capabilities() {
+        return Set.of();
+    }
+
+    /** 执行工具并返回统一结果。context 提供本次调用的环境（如所属会话）。 */
+    ToolResult execute(Map<String, Object> args, ToolContext context);
 }

@@ -18,6 +18,22 @@ public interface MemoryStore {
     /** 按 id 删除记录，返回是否真的删除了。 */
     boolean delete(String id);
 
+    /**
+     * 按条件删除记录，返回删除条数。筛选语义与 {@link #query} 一致，
+     * 忽略分页。用于按 sessionId 清理一个会话的全部消息等场景。
+     *
+     * <p>筛选条件<b>不得为空</b>：空条件等价于清空全部记录，
+     * 本方法会直接拒绝，避免误删整表。</p>
+     */
+    int deleteWhere(MemoryQuery query);
+
+    /** 校验批量删除的筛选条件非空，供各实现复用。 */
+    static void requireFilters(MemoryQuery query) {
+        if (query == null || query.filters().isEmpty()) {
+            throw new IllegalArgumentException("批量删除必须指定筛选条件，禁止无条件下清空");
+        }
+    }
+
     /** 按条件查询记录，支持分页。 */
     List<MemoryRecord> query(MemoryQuery query);
 

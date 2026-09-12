@@ -6,6 +6,7 @@ import cn.thyme.llm.model.LlmToolDefinition;
 import cn.thyme.llm.providers.SiliconFlowLlmClient;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import java.util.List;
 import java.util.Map;
@@ -15,8 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * 硅基流动（SiliconFlow）调用测试（非流式）。
- * URL、API key、模型名从根目录 application.yml 读取，不硬编码。
+ * URL、模型名硬编码，API key 从环境变量 {@code SILICONFLOW_API_KEY} 读取。
+ * 未设置该环境变量时跳过（避免无凭据时失败）。
  */
+@EnabledIfEnvironmentVariable(named = "SILICONFLOW_API_KEY", matches = ".+")
 class SiliconFlowLlmClientTest {
 
     @Test

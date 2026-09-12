@@ -4,17 +4,20 @@ import cn.thyme.llm.model.LlmMessage;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Agent 的上下文：global 为全局上下文（目标/约束，所有 agent 共享），
- * task 为本次任务描述（委派时由主 agent 传递），history 为 agent 私有的对话历史。
+ * task 为本次任务描述（委派时由主 agent 传递），history 为 agent 私有的对话历史，
+ * sessionId 标识本次会话（用于事件与会话历史）。
  * 每个 agent 持独立实例，实现上下文隔离。
  */
-public record AgentContext(String global, String task, List<LlmMessage> history) {
+public record AgentContext(String global, String task, List<LlmMessage> history, String sessionId) {
 
     public AgentContext {
         global = global == null ? "" : global;
         history = history == null ? List.of() : List.copyOf(history);
+        sessionId = sessionId == null || sessionId.isEmpty() ? UUID.randomUUID().toString() : sessionId;
     }
 
     public static Builder builder() {
@@ -25,6 +28,7 @@ public record AgentContext(String global, String task, List<LlmMessage> history)
         private String global;
         private String task;
         private final List<LlmMessage> history = new ArrayList<>();
+        private String sessionId;
 
         private Builder() {
         }
@@ -50,8 +54,13 @@ public record AgentContext(String global, String task, List<LlmMessage> history)
             return this;
         }
 
+        public Builder sessionId(String sessionId) {
+            this.sessionId = sessionId;
+            return this;
+        }
+
         public AgentContext build() {
-            return new AgentContext(global, task, List.copyOf(history));
+            return new AgentContext(global, task, List.copyOf(history), sessionId);
         }
     }
 }

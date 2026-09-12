@@ -31,6 +31,18 @@ public class InMemoryMemoryStore implements MemoryStore {
     }
 
     @Override
+    public int deleteWhere(MemoryQuery query) {
+        MemoryStore.requireFilters(query);
+        int removed = 0;
+        for (MemoryRecord record : List.copyOf(records.values())) {
+            if (matchesAll(record, query.filters()) && records.remove(record.id()) != null) {
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    @Override
     public List<MemoryRecord> query(MemoryQuery query) {
         List<MemoryRecord> matched = new ArrayList<>();
         for (MemoryRecord record : sorted()) {

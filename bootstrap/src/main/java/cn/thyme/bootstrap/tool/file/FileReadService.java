@@ -1,50 +1,32 @@
 package cn.thyme.bootstrap.tool.file;
 
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 
 /**
- * 文件读取能力层：持有根目录，把读取限制在根目录内，提供编码、行范围分页
- * 与字符数截断。不依赖 Spring，可独立测试。
+ * 读取结果的分页与截断：入参已是文件全文，此处只负责按行范围选取与字符数截断。
+ * 文件定位与访问控制由 {@code SessionWorkspace} 承担，故本类不再接触文件系统。
  */
-public class FileReadService {
+final class FileReadService {
 
-    private final Path baseDir;
-    private final int defaultMaxChars;
-
-    public FileReadService(Path baseDir, int defaultMaxChars) {
-        this.baseDir = baseDir.toAbsolutePath().normalize();
-        this.defaultMaxChars = defaultMaxChars;
+    private FileReadService() {
     }
 
     /**
-     * 读取根目录内的一个文本文件。
+     * 对全文做分页与截断。
      *
-     * @param path    相对根目录的路径（也可传根目录内的绝对路径）
-     * @param charset 编码，为空则用 UTF-8
+     * @param text     文件全文
      * @param maxChars 最大返回字符数，为空则用默认值
-     * @param offset  起始行号（从 1 开始），为空则从头读
-     * @param limit   读取行数，为空则读到结尾
+     * @param offset   起始行号（从 1 开始），为空则从头读
+     * @param limit    读取行数，为空则读到结尾
      */
-    public FileReadResult read(String path, Charset charset, Integer maxChars,
-                               Integer offset, Integer limit) throws IOException {
-        Path file = resolve(path);
-        if (!Files.isRegularFile(file)) {
-            throw new IOException("文件不存在或不是普通文件: " + path);
-        }
-
-        Charset cs = charset == null ? StandardCharsets.UTF_8 : charset;
-        List<String> lines = Files.readAllLines(file, cs);
+    static FileReadResult read(String text, Integer maxChars, Integer offset, Integer limit) {
+        List<String> lines = text.lines().toList();
 
         int from = offset == null ? 0 : Math.max(0, offset - 1);
-        int to = limit == null ? lines.size() : Math.min(lines.size(), from + limit);
         if (from > lines.size()) {
             from = lines.size();
         }
+        int to = limit == null ? lines.size() : Math.min(lines.size(), from + limit);
         List<String> selected = lines.subList(from, to);
 
         StringBuilder sb = new StringBuilder();
@@ -53,7 +35,7 @@ public class FileReadService {
         }
         String content = sb.toString();
 
-        int max = maxChars == null ? defaultMaxChars : maxChars;
+        int max = maxChars == null ? FileReadService.DEFAULT_MAX_CHARS : maxChars;
         boolean truncated = content.length() > max;
         if (truncated) {
             content = content.substring(0, max);
@@ -62,11 +44,5 @@ public class FileReadService {
         return new FileReadResult(content, truncated, lines.size(), selected.size());
     }
 
-    private Path resolve(String path) throws IOException {
-        Path resolved = baseDir.resolve(path).normalize();
-        if (!resolved.startsWith(baseDir)) {
-            throw new IOException("路径越界，超出根目录: " + path);
-        }
-        return resolved;
-    }
+    static final int DEFAULT_MAX_CHARS = 10000;
 }

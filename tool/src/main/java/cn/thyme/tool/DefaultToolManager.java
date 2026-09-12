@@ -2,6 +2,11 @@ package cn.thyme.tool;
 
 import cn.thyme.tool.registry.InMemoryToolRegistry;
 import cn.thyme.tool.registry.ToolRegistry;
+import cn.thyme.tool.security.ApprovalHandler;
+import cn.thyme.tool.security.DefaultToolSecurityPolicy;
+import cn.thyme.tool.security.IsolationLevel;
+import cn.thyme.tool.security.SecurityDecision;
+import cn.thyme.tool.security.ToolSecurityPolicy;
 import cn.thyme.tool.selector.DefaultToolSelector;
 import cn.thyme.tool.selector.ToolSelector;
 
@@ -10,12 +15,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 门面默认实现：合并内部工具与 MCP 工具，统一对外提供 describe/select/execute。
- * 执行时按工具的 {@link ExecutionMode} 决定在调用线程还是默认执行器上运行，
- * 并支持超时。
+ * 执行前由 {@link ToolSecurityPolicy} 评估安全决策，按动作（允许/确认/拒绝）
+ * 与隔离级别选择执行环境，并支持超时。
  */
 public class DefaultToolManager implements ToolManager {
 
@@ -25,7 +35,11 @@ public class DefaultToolManager implements ToolManager {
     private final ToolRegistry mcp;
     private final ToolSelector selector;
     private final ExecutorService executor;
+    private final ExecutorService isolatedExecutor;
     private final boolean ownsExecutor;
+
+    private ToolSecurityPolicy securityPolicy = new DefaultToolSecurityPolicy();
+    private ApprovalHandler approvalHandler;
 
     public DefaultToolManager() {
         this(new InMemoryToolRegistry(), new InMemoryToolRegistry(),
@@ -37,25 +51,33 @@ public class DefaultToolManager implements ToolManager {
         this.internal = internal;
         this.mcp = mcp;
         this.selector = selector;
-        if (executor == null) {
-            this.executor = new ThreadPoolExecutor(
-                    4,
-                    16,
-                    60L,
-                    TimeUnit.SECONDS,
-                    new LinkedBlockingQueue<>(100),
-                    r -> {
-                        Thread t = new Thread(r);
-                        t.setName("tool-executor-" + t.threadId());
-                        t.setDaemon(true);
-                        return t;
-                    },
-                    new ThreadPoolExecutor.CallerRunsPolicy());
-            this.ownsExecutor = true;
-        } else {
-            this.executor = executor;
-            this.ownsExecutor = false;
-        }
+        this.ownsExecutor = executor == null;
+        this.executor = executor == null ? newExecutor("tool-executor") : executor;
+        this.isolatedExecutor = newExecutor("tool-isolated-executor");
+    }
+
+    private static ExecutorService newExecutor(String name) {
+        return new ThreadPoolExecutor(
+                4,
+                16,
+                60L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(100),
+                r -> {
+                    Thread t = new Thread(r);
+                    t.setName(name + "-" + t.threadId());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy());
+    }
+
+    public void setSecurityPolicy(ToolSecurityPolicy securityPolicy) {
+        this.securityPolicy = securityPolicy;
+    }
+
+    public void setApprovalHandler(ApprovalHandler approvalHandler) {
+        this.approvalHandler = approvalHandler;
     }
 
     @Override
@@ -94,12 +116,12 @@ public class DefaultToolManager implements ToolManager {
     }
 
     @Override
-    public ToolResult execute(String name, Map<String, Object> args) {
-        return execute(name, args, DEFAULT_TIMEOUT);
+    public ToolResult execute(String name, Map<String, Object> args, ToolContext context) {
+        return execute(name, args, context, DEFAULT_TIMEOUT);
     }
 
     /** 按名称执行工具，指定超时；同步阻塞等待结果。 */
-    public ToolResult execute(String name, Map<String, Object> args, Duration timeout) {
+    public ToolResult execute(String name, Map<String, Object> args, ToolContext context, Duration timeout) {
         Optional<Tool> tool = resolve(name);
         if (tool.isEmpty()) {
             return ToolResult.failure("工具不存在: " + name);
@@ -108,13 +130,29 @@ public class DefaultToolManager implements ToolManager {
                 .or(() -> mcp.describe(name))
                 .orElseThrow();
 
-        // 只能同步的工具在当前线程直接执行，无法被超时中断。
-        if (descriptor.executionMode() == ExecutionMode.SYNC_ONLY) {
-            return run(tool.get(), args);
+        SecurityDecision decision = securityPolicy.evaluate(descriptor.capabilities(), args, context);
+        switch (decision.action()) {
+            case DENY -> {
+                return ToolResult.failure("工具被安全策略拒绝: " + name);
+            }
+            case CONFIRM -> {
+                if (approvalHandler == null || !approvalHandler.requestApproval(name, args)) {
+                    return ToolResult.failure("用户未确认执行工具: " + name);
+                }
+            }
+            case ALLOW -> {
+            }
         }
 
+        // 无隔离且只能同步的工具，在当前线程直接执行；其余走线程池（THREAD/PROCESS 用隔离池）。
+        if (decision.isolation() == IsolationLevel.NONE
+                && descriptor.executionMode() == ExecutionMode.SYNC_ONLY) {
+            return run(tool.get(), args, context);
+        }
+
+        ExecutorService target = decision.isolation() == IsolationLevel.NONE ? executor : isolatedExecutor;
         CompletableFuture<ToolResult> future =
-                CompletableFuture.supplyAsync(() -> run(tool.get(), args), executor);
+                CompletableFuture.supplyAsync(() -> run(tool.get(), args, context), target);
         try {
             return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -130,9 +168,9 @@ public class DefaultToolManager implements ToolManager {
         return t.isPresent() ? t : mcp.get(name);
     }
 
-    private ToolResult run(Tool tool, Map<String, Object> args) {
+    private ToolResult run(Tool tool, Map<String, Object> args, ToolContext context) {
         try {
-            return tool.execute(args);
+            return tool.execute(args, context);
         } catch (Exception e) {
             return ToolResult.failure(e.getMessage());
         }
@@ -142,6 +180,7 @@ public class DefaultToolManager implements ToolManager {
     public void shutdown() {
         if (ownsExecutor) {
             executor.shutdown();
+            isolatedExecutor.shutdown();
         }
     }
 }

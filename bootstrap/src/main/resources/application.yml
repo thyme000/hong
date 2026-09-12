@@ -1,0 +1,39 @@
+spring:
+  profiles:
+    active: local
+  datasource:
+    # 数据/日志/沙箱统一锚定到项目根（@project.parent.basedir@ 由 Maven 资源过滤注入），
+    # 避免相对路径随启动工作目录（IDEA 项目根 vs 模块目录）落到不同位置。
+    url: 'jdbc:sqlite:@project.parent.basedir@/data/memory.db'
+
+mybatis:
+  mapper-locations: classpath*:/mapper/**/*.xml
+
+# 上传文件的会话沙箱根目录，每个会话一个子目录；目录由上传行为惰性创建
+tool:
+  workspace:
+    dir: '@project.parent.basedir@/data/workspaces'
+
+memory:
+  store:
+    type: sqlite
+
+# 日志目录同样锚定到项目根；logback-spring.xml 通过 ${LOG_PATH} 读取
+logging:
+  file:
+    path: '@project.parent.basedir@/logs'
+
+llm:
+  # 切换模型提供商只改这一行；providers 下所有条目都保留，便于随时切换
+  default-provider: ollama
+  providers:
+    ollama:
+      url: http://localhost:11434/v1
+      models:
+        - qwen3.5:9b
+      temperature: 0.7
+    siliconflow:
+      url: https://api.siliconflow.cn/v1
+      models:
+        - deepseek-ai/DeepSeek-V4-Flash
+      temperature: 0.7

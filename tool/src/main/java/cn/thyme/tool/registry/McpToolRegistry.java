@@ -2,6 +2,7 @@ package cn.thyme.tool.registry;
 
 import cn.thyme.tool.ExecutionMode;
 import cn.thyme.tool.Tool;
+import cn.thyme.tool.ToolContext;
 import cn.thyme.tool.ToolDescriptor;
 import cn.thyme.tool.ToolResult;
 import cn.thyme.tool.ToolSource;
@@ -86,7 +87,8 @@ public class McpToolRegistry implements ToolRegistry {
                 serverName,
                 "invoke",
                 Set.of(),
-                toMap(t.inputSchema()));
+                toMap(t.inputSchema()),
+                Set.of());
     }
 
     private static Map<String, Object> toMap(McpSchema.JsonSchema s) {
@@ -163,7 +165,7 @@ public class McpToolRegistry implements ToolRegistry {
         }
 
         @Override
-        public ToolResult execute(Map<String, Object> args) {
+        public ToolResult execute(Map<String, Object> args, ToolContext context) {
             McpSchema.CallToolResult r = client.callTool(
                     McpSchema.CallToolRequest.builder()
                             .name(remote.name())

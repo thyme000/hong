@@ -1,34 +1,32 @@
 package cn.thyme.bootstrap.tool.file;
 
+import cn.thyme.bootstrap.workspace.SessionWorkspace;
+import cn.thyme.bootstrap.workspace.WorkspaceException;
 import cn.thyme.tool.ExecutionMode;
 import cn.thyme.tool.Tool;
+import cn.thyme.tool.ToolContext;
 import cn.thyme.tool.ToolMark;
 import cn.thyme.tool.ToolResult;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import cn.thyme.tool.security.Capability;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.Charset;
-import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * 读文件工具：读取根目录内指定文件的内容，支持编码、行范围分页与字符数截断。
- * 根目录由配置项 {@code tool.read.base-dir} 指定，未配置时本工具不注册。
+ * 读文件工具：读取当前<b>会话沙箱</b>内指定文件的内容，支持按行范围分页与字符数截断。
+ * 文件来自用户上传，用原始文件名寻址；沙箱由调用上下文里的 sessionId 定位。
  */
 @Component
-@ConditionalOnProperty(name = "tool.read.base-dir")
 @ToolMark(category = "file", action = "read")
 public class ReadFileTool implements Tool {
 
-    private static final int DEFAULT_MAX_CHARS = 10000;
+    private final SessionWorkspace workspace;
 
-    private final FileReadService service;
-
-    public ReadFileTool(@Value("${tool.read.base-dir}") String baseDir) {
-        this.service = new FileReadService(Paths.get(baseDir), DEFAULT_MAX_CHARS);
+    public ReadFileTool(SessionWorkspace workspace) {
+        this.workspace = workspace;
     }
 
     @Override
@@ -38,7 +36,8 @@ public class ReadFileTool implements Tool {
 
     @Override
     public String description() {
-        return "读取根目录内指定文件的内容，支持指定编码、按行范围分页与按字符数截断。";
+        return "读取当前会话中已上传文件的内容。文件名用 list_files 返回的原始名，"
+                + "支持按行范围分页与按字符数截断。";
     }
 
     @Override
@@ -47,10 +46,14 @@ public class ReadFileTool implements Tool {
     }
 
     @Override
+    public Set<Capability> capabilities() {
+        return Set.of(Capability.FILE_READ);
+    }
+
+    @Override
     public Map<String, Object> inputSchema() {
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("path", Map.of("type", "string", "description", "文件路径（相对根目录）"));
-        properties.put("encoding", Map.of("type", "string", "description", "编码，默认 UTF-8"));
+        properties.put("path", Map.of("type", "string", "description", "文件名（用 list_files 返回的名字）"));
         properties.put("maxSize", Map.of("type", "integer", "description", "最大返回字符数，默认 10000"));
         properties.put("offset", Map.of("type", "integer", "description", "起始行号，从 1 开始"));
         properties.put("limit", Map.of("type", "integer", "description", "读取行数"));
@@ -63,17 +66,18 @@ public class ReadFileTool implements Tool {
     }
 
     @Override
-    public ToolResult execute(Map<String, Object> args) {
+    public ToolResult execute(Map<String, Object> args, ToolContext context) {
         Object path = args.get("path");
         if (path == null) {
             return ToolResult.failure("缺少必填参数: path");
         }
+        if (!context.hasSession()) {
+            return ToolResult.failure("缺少会话上下文，无法定位沙箱");
+        }
 
         try {
-            Charset charset = toCharset(args.get("encoding"));
-            FileReadResult result = service.read(
-                    String.valueOf(path),
-                    charset,
+            FileReadResult result = FileReadService.read(
+                    workspace.readText(context.sessionId(), String.valueOf(path)),
                     toInt(args.get("maxSize")),
                     toInt(args.get("offset")),
                     toInt(args.get("limit")));
@@ -83,16 +87,9 @@ public class ReadFileTool implements Tool {
                 text += "\n[已截断：内容超过大小上限]";
             }
             return ToolResult.success(text, result);
-        } catch (Exception e) {
+        } catch (WorkspaceException e) {
             return ToolResult.failure(e.getMessage());
         }
-    }
-
-    private static Charset toCharset(Object value) {
-        if (value == null) {
-            return null;
-        }
-        return Charset.forName(String.valueOf(value));
     }
 
     private static Integer toInt(Object value) {

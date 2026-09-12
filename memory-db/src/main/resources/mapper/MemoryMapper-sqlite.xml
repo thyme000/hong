@@ -21,4 +21,14 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
+    <!-- SQLite 方言：按 JSON 字段条件批量删除 -->
+    <delete id="deleteWhere" databaseId="sqlite">
+        DELETE FROM memory_record
+        <where>
+            <foreach collection="filters" item="f">
+                AND json_extract(metadata, '$.${f.key}') = #{f.value}
+            </foreach>
+        </where>
+    </delete>
+
 </mapper>

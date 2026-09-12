@@ -10,6 +10,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemoryMemoryStoreTest {
@@ -130,5 +131,32 @@ class InMemoryMemoryStoreTest {
         printRecords("list 全部（按 id 排序）", all);
 
         assertEquals(List.of("a", "b", "c"), all.stream().map(MemoryRecord::id).toList());
+    }
+
+    @Test
+    @DisplayName("按条件批量删除")
+    void deletesWhere() {
+        store.save(MemoryRecord.of("a", "1", Map.of("sessionId", "s1")));
+        store.save(MemoryRecord.of("b", "2", Map.of("sessionId", "s1")));
+        store.save(MemoryRecord.of("c", "3", Map.of("sessionId", "s2")));
+        print("保存 3 条：a/b 属于 s1，c 属于 s2");
+
+        int removed = store.deleteWhere(MemoryQuery.builder().eq("sessionId", "s1").build());
+        print("删除 sessionId=s1 共 " + removed + " 条，剩余 " + store.list().size());
+
+        assertEquals(2, removed);
+        assertEquals(List.of("c"), store.list().stream().map(MemoryRecord::id).toList());
+    }
+
+    @Test
+    @DisplayName("无筛选条件时拒绝批量删除，不误清空")
+    void rejectsEmptyFilterDelete() {
+        store.save(MemoryRecord.of("a", "1"));
+        store.save(MemoryRecord.of("b", "2"));
+
+        assertThrows(IllegalArgumentException.class, () -> store.deleteWhere(MemoryQuery.builder().build()));
+        print("空条件被拒绝后仍有 " + store.list().size() + " 条，未被清空");
+
+        assertEquals(2, store.list().size());
     }
 }

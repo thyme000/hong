@@ -5,8 +5,6 @@ import cn.thyme.memory.MemoryRecord;
 import cn.thyme.memory.MemoryStore;
 import cn.thyme.memory.filter.EqFilter;
 import cn.thyme.memory.filter.Filter;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
@@ -16,10 +14,8 @@ import java.util.Optional;
 /**
  * 记忆存储的数据库实现：基于 MyBatis，metadata 以 JSON 列存储，
  * 查询用各库的 JSON 函数在 SQL 层做精确匹配。
- * 通过配置 {@code memory.store.type=database} 启用。
+ * 由装配层在 memory.store.type 非 inmemory 时创建。
  */
-@Component
-@ConditionalOnProperty(name = "memory.store.type", havingValue = "database")
 public class DatabaseMemoryStore implements MemoryStore {
 
     private static final String SAFE_KEY = "[A-Za-z_][A-Za-z0-9_]*";
@@ -46,6 +42,12 @@ public class DatabaseMemoryStore implements MemoryStore {
     @Override
     public boolean delete(String id) {
         return mapper.deleteById(id) > 0;
+    }
+
+    @Override
+    public int deleteWhere(MemoryQuery query) {
+        MemoryStore.requireFilters(query);
+        return mapper.deleteWhere(query.filters().stream().map(this::toFilterParam).toList());
     }
 
     @Override

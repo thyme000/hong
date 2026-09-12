@@ -1,5 +1,7 @@
 package cn.thyme.tool;
 
+import cn.thyme.tool.security.Capability;
+
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -16,7 +18,8 @@ public record ToolDescriptor(
         String category,
         String action,
         Set<String> tags,
-        Map<String, Object> inputSchema) {
+        Map<String, Object> inputSchema,
+        Set<Capability> capabilities) {
 
     public ToolDescriptor {
         Objects.requireNonNull(name, "name must not be null");
@@ -27,6 +30,7 @@ public record ToolDescriptor(
         Objects.requireNonNull(action, "action must not be null");
         tags = tags == null ? Set.of() : Set.copyOf(tags);
         inputSchema = inputSchema == null ? Map.of() : Map.copyOf(inputSchema);
+        capabilities = capabilities == null ? Set.of() : Set.copyOf(capabilities);
     }
 
     /** 由 {@link Tool} 及其 {@link ToolMark} 注解构造描述。 */
@@ -43,6 +47,7 @@ public record ToolDescriptor(
                 category,
                 action,
                 tags,
-                tool.inputSchema());
+                tool.inputSchema(),
+                tool.capabilities());
     }
 }

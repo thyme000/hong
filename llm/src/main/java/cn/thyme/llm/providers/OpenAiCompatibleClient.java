@@ -160,8 +160,14 @@ public class OpenAiCompatibleClient implements LlmClient {
     }
 
     private LlmResponse toResponse(JsonNode root) {
-        JsonNode choice = root.get("choices").get(0);
-        JsonNode message = choice.get("message");
+        JsonNode choices = root.get("choices");
+        if (choices == null || choices.isNull() || choices.size() == 0) {
+            throw new LlmException("模型响应缺少 choices: " + root);
+        }
+        JsonNode message = choices.get(0).get("message");
+        if (message == null || message.isNull()) {
+            throw new LlmException("模型响应缺少 message: " + root);
+        }
         String content = textOrNull(message.get("content"));
         List<LlmToolCall> toolCalls = toToolCalls(message.get("tool_calls"));
         LlmUsage usage = toUsage(root.get("usage"));
