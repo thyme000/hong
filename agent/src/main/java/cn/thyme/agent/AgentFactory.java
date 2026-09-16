@@ -26,6 +26,33 @@ public class AgentFactory {
         return new DefaultAgent(applyLimits(config));
     }
 
+    /**
+     * 把子 agent 包装成一个工具，供主 agent 委派任务。
+     *
+     * <p>子 agent 的预算每次委派都不同（由父级按档位划拨），所以这里传入的是
+     * 一个「按预算造 agent」的工厂，而不是预先造好的实例——否则子 agent 会把
+     * 父预算当成自己的上限。</p>
+     */
+    public Tool createSubAgentTool(String name, String description, AgentConfig subConfig,
+                                   String global, int subAgentMaxIterations) {
+        int iterations = Math.min(subAgentMaxIterations, maxIterationsLimit);
+        int maxTokens = Math.min(subConfig.maxTokens(), maxTokensLimit);
+        return new SubAgentTool(name, description, budget -> new DefaultAgent(
+                AgentConfig.builder()
+                        .name(subConfig.name())
+                        .llmClient(subConfig.llmClient())
+                        .model(subConfig.model())
+                        .systemPrompt(subConfig.systemPrompt())
+                        .tools(subConfig.tools())
+                        .maxIterations(iterations)
+                        .maxTokens(maxTokens)
+                        .temperature(subConfig.temperature())
+                        .eventPublisher(subConfig.eventPublisher())
+                        // budget 为 null 时由 DefaultAgent 按 maxTokens 自建
+                        .budget(budget)
+                        .build()), global);
+    }
+
     private AgentConfig applyLimits(AgentConfig config) {
         int maxIterations = Math.min(config.maxIterations(), maxIterationsLimit);
         int maxTokens = Math.min(config.maxTokens(), maxTokensLimit);

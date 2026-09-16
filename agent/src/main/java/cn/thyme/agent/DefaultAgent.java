@@ -103,7 +103,9 @@ public class DefaultAgent implements Agent {
                 for (LlmToolCall call : response.toolCalls()) {
                     publisher.publish(new AgentEvent.ToolCall(
                             sessionId, Instant.now(), call.id(), call.name(), call.arguments()));
-                    ToolResult result = executeTool(call, sessionId, budget);
+                    // 工具作用于「工作区会话」：子 agent 因此仍能看到父会话的文件；
+                    // 事件与历史仍挂在 sessionId 上，保持上下文隔离
+                    ToolResult result = executeTool(call, context.workspaceSessionId(), budget);
                     publisher.publish(new AgentEvent.ToolResult(
                             sessionId, Instant.now(), call.id(), call.name(), result.text(), result.ok()));
                     results.add(new LlmToolResult(call.id(), result.text(), !result.ok()));

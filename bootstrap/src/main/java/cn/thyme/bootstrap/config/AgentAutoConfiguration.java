@@ -15,6 +15,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -27,6 +28,10 @@ public class AgentAutoConfiguration {
 
     @Value("${agent.system-prompt-file:prompts/general.md}")
     private String systemPromptFile;
+
+    /** 子 agent 自己的轮次上限：比主 agent 收敛，避免一次委派吃掉整轮对话。 */
+    @Value("${agent.sub-agent.max-iterations:8}")
+    private int subAgentMaxIterations;
 
     @Bean
     public AgentEventPublisher agentEventPublisher(List<AgentListener> listeners) {
@@ -48,26 +53,56 @@ public class AgentAutoConfiguration {
         return client;
     }
 
+    /**
+     * 主 agent 与子 agent 共用同一批普通工具；委派工具只挂在主 agent 上。
+     * 子 agent 不再持有委派工具，因此委派深度固定为 1 层——避免嵌套委派把
+     * 预算与延迟放大到不可控。
+     */
     @Bean
     public Agent mainAgent(LlmClient llmClient, LlmProperties props, List<Tool> tools,
                            AgentEventPublisher eventPublisher) {
         String provider = props.getDefaultProvider();
         LlmProperties.ProviderProperties p = props.getProviders().get(provider);
         String model = p.getModels().get(0);
+        AgentFactory factory = new AgentFactory();
+
+        // 子 agent 是另一个 agent 实例，但共用同一个 LlmClient / 事件发布器，
+        // 并挂上（自己的）子 agent 工具，从而支持多层委派
+        AgentConfig subConfig = AgentConfig.builder()
+                .name("hong-sub")
+                .llmClient(llmClient)
+                .model(model)
+                .systemPromptClasspath(systemPromptFile)
+                .tools(tools)
+                .maxIterations(subAgentMaxIterations)
+                .temperature(p.getTemperature())
+                .eventPublisher(eventPublisher)
+                .build();
+        Tool subAgentTool = factory.createSubAgentTool(
+                "delegate_task",
+                "把一个较复杂的子任务交给独立上下文的子 agent 执行，返回它的文字结论。",
+                subConfig, "", subAgentMaxIterations);
 
         AgentConfig.Builder builder = AgentConfig.builder()
                 .name("hong")
                 .llmClient(llmClient)
                 .model(model)
                 .systemPromptClasspath(systemPromptFile)
-                .tools(tools)
+                .tools(concat(tools, subAgentTool))
                 .temperature(p.getTemperature())
                 .eventPublisher(eventPublisher);
         // 未配置时保持 AgentConfig 的默认上限，不在这里补一个平行的默认值
         if (p.getMaxTokens() != null) {
             builder.maxTokens(p.getMaxTokens());
         }
-        return new AgentFactory().create(builder.build());
+        return factory.create(builder.build());
+    }
+
+    /** 合并常规工具与委派工具；委派工具单独传，避免子 agent 把常规工具也带上。 */
+    private static List<Tool> concat(List<Tool> tools, Tool extra) {
+        List<Tool> result = new ArrayList<>(tools);
+        result.add(extra);
+        return List.copyOf(result);
     }
 
     private LlmClient createClient(String provider, LlmProperties.ProviderProperties p) {
