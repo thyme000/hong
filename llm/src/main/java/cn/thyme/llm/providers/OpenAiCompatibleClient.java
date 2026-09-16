@@ -1,6 +1,7 @@
 package cn.thyme.llm.providers;
 
 import cn.thyme.llm.LlmClient;
+import cn.thyme.llm.model.LlmDelta;
 import cn.thyme.llm.model.LlmException;
 import cn.thyme.llm.model.LlmMessage;
 import cn.thyme.llm.model.LlmRequest;
@@ -11,23 +12,35 @@ import cn.thyme.llm.model.LlmToolDefinition;
 import cn.thyme.llm.model.LlmToolResult;
 import cn.thyme.llm.model.LlmUsage;
 import cn.thyme.llm.model.ThinkingLevel;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * 通用的 OpenAI 兼容客户端：走 {@code POST {baseUrl}/chat/completions}，
  * baseUrl 应包含到 {@code /v1} 为止的前缀。支持消息、工具调用、token 用量、
  * 深度思考与可选的 API key（Authorization: Bearer）。
+ *
+ * <p>请求一律以流式发出（{@code stream: true}）：增量实时回调给调用方，完整响应
+ * 在流读完后一次性返回。非流式响应没有增量可回调，若另开一条同步路径，两边的
+ * 解析逻辑迟早会不一致——所以这里只有这一条路。</p>
  */
 public class OpenAiCompatibleClient implements LlmClient {
 
@@ -44,20 +57,28 @@ public class OpenAiCompatibleClient implements LlmClient {
     }
 
     @Override
-    public LlmResponse chat(LlmRequest request) {
+    public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
         try {
             String body = json.writeValueAsString(toRequestBody(request));
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(chatCompletionsUrl))
-                    .header("Content-Type", "application/json");
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream");
             if (apiKey != null && !apiKey.isEmpty()) {
                 builder.header("Authorization", "Bearer " + apiKey);
             }
             HttpRequest httpRequest = builder
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
-            HttpResponse<String> httpResponse = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            return toResponse(json.readTree(httpResponse.body()));
+            // 必须自己逐行消费 InputStream：BodyHandlers 是一次性的，一旦用 ofString()
+            // 把响应整体读成字符串，就再也拿不到增量，流式无从谈起
+            HttpResponse<InputStream> httpResponse =
+                    httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream stream = httpResponse.body();
+                 BufferedReader reader = new BufferedReader(
+                         new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                return readStream(reader, deltaListener);
+            }
         } catch (IOException e) {
             throw new LlmException("调用模型失败: " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -66,10 +87,157 @@ public class OpenAiCompatibleClient implements LlmClient {
         }
     }
 
+    /**
+     * 消费 SSE 流：逐行解析 {@code data:} 帧，把增量回调出去，最后拼出完整响应。
+     *
+     * <p>只有本方法声明的两类受检异常会被转成 {@link LlmException}；调用方（例如
+     * {@code deltaListener}）抛出的运行时异常原样向上传播，这是「中途取消」依赖的通道。</p>
+     */
+    private LlmResponse readStream(BufferedReader reader, Consumer<LlmDelta> deltaListener)
+            throws IOException {
+        String model = null;
+        StringBuilder content = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
+        // tool_calls 在流里按 index 分片到达：id 与 name 只在首片给，arguments 每片追加
+        Map<Integer, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
+        LlmUsage usage = null;
+        boolean sawData = false;
+
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.isEmpty() || line.startsWith(":")) {
+                // 空行是帧分隔符；冒号开头是注释（保活心跳），按 SSE 规范忽略
+                continue;
+            }
+            if (!line.startsWith("data:")) {
+                // event: / id: / retry: 等字段本客户端不使用
+                continue;
+            }
+            String payload = line.substring("data:".length()).trim();
+            if (payload.isEmpty()) {
+                continue;
+            }
+            if ("[DONE]".equals(payload)) {
+                break;
+            }
+            sawData = true;
+
+            JsonNode root;
+            try {
+                root = json.readTree(payload);
+            } catch (JacksonException e) {
+                throw new LlmException("模型流式响应不是合法 JSON: " + payload, e);
+            }
+            if (root.path("model").isTextual()) {
+                model = root.get("model").asText();
+            }
+            JsonNode usageNode = root.get("usage");
+            if (usageNode != null && !usageNode.isNull()) {
+                usage = toUsage(usageNode);
+            }
+
+            JsonNode choices = root.get("choices");
+            if (choices == null || !choices.isArray() || choices.isEmpty()) {
+                // 开着 include_usage 时，末块专门用来带 usage，choices 为空
+                continue;
+            }
+            JsonNode delta = choices.get(0).get("delta");
+            if (delta == null || delta.isNull()) {
+                continue;
+            }
+            emit(reasoning, textOrNull(delta.get("reasoning_content")), LlmDelta.Kind.REASONING, deltaListener);
+            emit(content, textOrNull(delta.get("content")), LlmDelta.Kind.CONTENT, deltaListener);
+            accumulateToolCalls(toolCalls, delta.get("tool_calls"));
+        }
+
+        if (!sawData) {
+            throw new LlmException("模型未返回任何流式数据: " + chatCompletionsUrl);
+        }
+        // content 为空串（只有工具调用或只有思考）时保持 null，与 AgentResult 的契约一致
+        String finalContent = content.isEmpty() ? null : content.toString();
+        List<LlmToolCall> calls = new ArrayList<>();
+        for (ToolCallAccumulator acc : toolCalls.values()) {
+            calls.add(acc.toToolCall(json));
+        }
+        return new LlmResponse(model == null ? "" : model, finalContent, calls, usage);
+    }
+
+    /** 非空增量才回调，空片段（厂商的心跳块、只有 tool_calls 的块）直接丢弃。 */
+    private static void emit(StringBuilder sink, String text,
+                             LlmDelta.Kind kind, Consumer<LlmDelta> listener) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        sink.append(text);
+        listener.accept(new LlmDelta(kind, text));
+    }
+
+    private static void accumulateToolCalls(Map<Integer, ToolCallAccumulator> accumulators, JsonNode deltaToolCalls) {
+        if (deltaToolCalls == null || !deltaToolCalls.isArray()) {
+            return;
+        }
+        for (JsonNode call : deltaToolCalls) {
+            // 少数厂商不给 index（单工具调用时），此时所有分片都落在同一个槽位
+            int index = call.path("index").isInt() ? call.get("index").asInt() : 0;
+            accumulators.computeIfAbsent(index, k -> new ToolCallAccumulator())
+                    .merge(call, accumulators.size());
+        }
+    }
+
+    /** 一条工具调用在流里的分片累积：id / 名称只到一次，参数逐片拼接。 */
+    private static final class ToolCallAccumulator {
+
+        private String id;
+        private String name;
+        private final StringBuilder arguments = new StringBuilder();
+
+        void merge(JsonNode deltaCall, int fallbackId) {
+            if (deltaCall.path("id").isTextual()) {
+                id = deltaCall.get("id").asText();
+            }
+            JsonNode function = deltaCall.get("function");
+            if (function == null || function.isNull()) {
+                return;
+            }
+            if (function.path("name").isTextual()) {
+                name = function.get("name").asText();
+            }
+            if (function.path("arguments").isTextual()) {
+                arguments.append(function.get("arguments").asText());
+            }
+        }
+
+        LlmToolCall toToolCall(ObjectMapper json) {
+            // 没收到 id 时兜一个稳定值：后续回填工具结果要用它配对
+            String callId = id == null ? "call_" + fallbackId() : id;
+            return new LlmToolCall(callId, name, parseArguments(json, arguments.toString()));
+        }
+
+        private String fallbackId() {
+            return Integer.toHexString(System.identityHashCode(this));
+        }
+    }
+
+    private static Map<String, Object> parseArguments(ObjectMapper json, String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            return json.readValue(raw, Map.class);
+        } catch (JacksonException e) {
+            // 参数拼不完整（模型输出被截断、厂商分片异常）时不能让整轮对话失败：
+            // 退化成空参数，工具自己会因必填缺失回报失败
+            return Map.of();
+        }
+    }
+
     private Map<String, Object> toRequestBody(LlmRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model());
         body.put("messages", toMessages(request.messages()));
+        body.put("stream", true);
+        // 不显式要求，多数厂商的流式响应根本不带 usage，token 预算就只剩字符估算可用
+        body.put("stream_options", Map.of("include_usage", true));
         if (!request.tools().isEmpty()) {
             body.put("tools", toTools(request.tools()));
         }
@@ -157,41 +325,6 @@ public class OpenAiCompatibleClient implements LlmClient {
                     return t;
                 })
                 .toList();
-    }
-
-    private LlmResponse toResponse(JsonNode root) {
-        JsonNode choices = root.get("choices");
-        if (choices == null || choices.isNull() || choices.size() == 0) {
-            throw new LlmException("模型响应缺少 choices: " + root);
-        }
-        JsonNode message = choices.get(0).get("message");
-        if (message == null || message.isNull()) {
-            throw new LlmException("模型响应缺少 message: " + root);
-        }
-        String content = textOrNull(message.get("content"));
-        List<LlmToolCall> toolCalls = toToolCalls(message.get("tool_calls"));
-        LlmUsage usage = toUsage(root.get("usage"));
-        return new LlmResponse(root.path("model").asText(), content, toolCalls, usage);
-    }
-
-    private List<LlmToolCall> toToolCalls(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return List.of();
-        }
-        List<LlmToolCall> result = new ArrayList<>();
-        for (JsonNode call : node) {
-            JsonNode function = call.get("function");
-            Map<String, Object> arguments = parseArguments(function.get("arguments"));
-            result.add(new LlmToolCall(call.get("id").asText(), function.get("name").asText(), arguments));
-        }
-        return result;
-    }
-
-    private Map<String, Object> parseArguments(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return Map.of();
-        }
-        return json.readValue(node.asText(), Map.class);
     }
 
     private LlmUsage toUsage(JsonNode node) {
