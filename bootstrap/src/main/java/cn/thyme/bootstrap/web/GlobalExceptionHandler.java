@@ -1,5 +1,6 @@
 package cn.thyme.bootstrap.web;
 
+import cn.thyme.agent.EmptyModelResponseException;
 import cn.thyme.bootstrap.workspace.WorkspaceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> onIllegalArgument(IllegalArgumentException e) {
         log.warn("请求参数非法: {}", e.getMessage());
         return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+    }
+
+    /** 模型返回空响应：可重试，不是服务端 bug，记 WARN 并回 502。 */
+    @ExceptionHandler(EmptyModelResponseException.class)
+    public ResponseEntity<Map<String, String>> onEmptyModelResponse(EmptyModelResponseException e) {
+        log.warn("模型返回空响应: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("message", "模型未返回任何内容，请重试"));
     }
 
     /** 兜底：未预期的异常一律记 ERROR（含堆栈）后返回 500。 */

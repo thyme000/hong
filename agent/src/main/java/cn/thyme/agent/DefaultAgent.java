@@ -71,7 +71,13 @@ public class DefaultAgent implements Agent {
                 totalTokens += estimateTokens(response, messages);
 
                 if (!response.hasToolCalls()) {
-                    String content = response.content() == null ? "" : response.content();
+                    String content = response.content();
+                    if (content == null || content.isBlank()) {
+                        // 模型既没调工具也没给文本：不能静默当成空答案返回，
+                        // 否则调用方无法区分「模型没输出」和「模型正常完成」。
+                        throw new EmptyModelResponseException(
+                                "模型返回空内容（第 " + iterations + " 轮：既无工具调用也无文本）");
+                    }
                     publisher.publish(new AgentEvent.Message(sessionId, Instant.now(), LlmRole.ASSISTANT, content));
                     return finish(publisher, sessionId, new AgentResult(content, iterations, totalTokens, false,
                             sessionId));
