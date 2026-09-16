@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 import java.util.Map;
 
@@ -43,6 +44,22 @@ public class GlobalExceptionHandler {
         log.warn("模型返回空响应: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("message", "模型未返回任何内容，请重试"));
+    }
+
+    /**
+     * 客户端在异步响应（SSE 流）写回之前就断开了。
+     *
+     * <p>这是容器对断连的通知，不是服务端故障：响应已经写不出去了。必须在这里
+     * 悄悄收掉，否则会落到下面的兜底分支——它会尝试往一个
+     * {@code text/event-stream} 响应里写 JSON 错误体，写不进去再抛一层
+     * {@code HttpMessageNotWritableException}。结果是用户每刷新一次页面，日志里
+     * 就多一坨 ERROR 堆栈，真正的故障反而被淹掉。</p>
+     *
+     * <p>返回 {@code void}：不写响应体，只把异常标记为已处理。</p>
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void onClientDisconnected(AsyncRequestNotUsableException e) {
+        log.debug("客户端已断开，响应无法写出: {}", e.getMessage());
     }
 
     /** 兜底：未预期的异常一律记 ERROR（含堆栈）后返回 500。 */
