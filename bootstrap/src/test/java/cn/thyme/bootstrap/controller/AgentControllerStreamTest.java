@@ -24,6 +24,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
@@ -240,6 +242,67 @@ class AgentControllerStreamTest {
         String after = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertTrue(!after.contains("不该出现"), "取消后的增量不应外泄:\n" + after);
         assertTrue(!after.contains("event:message"), "半截回答不应落成终稿:\n" + after);
+    }
+
+    /**
+     * 取消的收尾帧与正常结束的收尾帧必须结构一致，只有 {@code stopReason} 不同。
+     *
+     * <p>取消与正常结束是两条独立的发送路径，容易各自演化成不同形状：取消那次
+     * 发完就 {@code complete()}，而正常那次带的是 agent 给的结果。前端若按
+     * {@code finished.content} 渲染终稿，字段缺失的分支就会读到 {@code undefined}。</p>
+     */
+    @Test
+    void 取消的收尾帧应与正常结束同构() throws Exception {
+        CountDownLatch firstDelta = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        agent.script = (context, emit) -> {
+            emit.accept(delta(context, "半截", false));
+            firstDelta.countDown();
+            await(release);
+            return completed(context, "不该出现的完整答案");
+        };
+
+        MvcResult result = mockMvc.perform(post("/agent/chat/stream")
+                        .contentType("application/json")
+                        .content("{\"sessionId\":\"s-shape\",\"task\":\"长任务\"}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        assertTrue(firstDelta.await(5, TimeUnit.SECONDS), "应已收到第一片增量");
+        mockMvc.perform(post("/agent/sessions/s-shape/cancel")).andExpect(status().isOk());
+
+        String body = bodyOf(result);
+        Map<String, Object> payload = finishedDataOf(body);
+
+        assertEquals("CANCELLED", payload.get("stopReason"), "停止原因:\n" + body);
+        assertEquals("s-shape", payload.get("sessionId"), "会话 id:\n" + body);
+        // content 被中断时为 null，但键必须存在——前端据此覆盖回答区
+        assertTrue(payload.containsKey("content"), "应带 content 键（值可为 null）:\n" + body);
+        assertTrue(payload.get("content") == null, "中断时不该有最终答案:\n" + body);
+        assertTrue(payload.containsKey("iterations"), "应带 iterations 键:\n" + body);
+        assertTrue(payload.containsKey("totalTokens"), "应带 totalTokens 键:\n" + body);
+
+        release.countDown();
+    }
+
+    /** 取出最后一个 {@code finished} 帧的 data，解析成 Map。 */
+    private static Map<String, Object> finishedDataOf(String body) throws Exception {
+        String json = null;
+        for (String block : body.split("\n\n")) {
+            String[] lines = block.strip().split("\n");
+            for (int i = 0; i < lines.length; i++) {
+                if (lines[i].equals("event:finished") && i + 1 < lines.length
+                        && lines[i + 1].startsWith("data:")) {
+                    json = lines[i + 1].substring("data:".length()).trim();
+                }
+            }
+        }
+        if (json == null) {
+            throw new AssertionError("响应体里没有 finished 帧:\n" + body);
+        }
+        return new ObjectMapper().readValue(json, new TypeReference<Map<String, Object>>() {
+        });
     }
 
     /**

@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -107,6 +108,10 @@ public class AgentRun implements AgentListener {
     /**
      * 主动取消：先给前端一帧收尾，再等下一次事件把 agent 打断。
      *
+     * <p>收尾帧走与正常结束同一条路径（{@link #onEvent} 的 Finished 分支），因此
+     * 三种终态——正常结束、被取消、出错回退——发出的 {@code finished} 帧结构完全
+     * 一致，只有 {@code stopReason} 不同。前端不必给某个分支单独写兜底。</p>
+     *
      * @return 本次调用是否真的取消了（已经结束的运行返回 false）
      */
     public boolean cancel() {
@@ -116,11 +121,11 @@ public class AgentRun implements AgentListener {
         if (!cancelled.compareAndSet(false, true)) {
             return false;
         }
-        // 立刻收尾，否则前端要等下一个增量才知道停了；而这个增量可能很久不来
-        send(EVENT_FINISHED, Map.of(
-                "stopReason", AgentStopReason.CANCELLED.name(),
-                "sessionId", sessionId));
-        complete();
+        // 立刻收尾，否则前端要等下一个增量才知道停了；而这个增量可能很久不来。
+        // 此刻该运行跑到第几轮、花了多少 token 只有 agent 自己知道，这里给不出来，
+        // 所以轮次与用量都是 0——它们本来就只是展示用的参考值
+        onEvent(new AgentEvent.Finished(sessionId, Instant.now(),
+                AgentResult.truncated(0, 0, AgentStopReason.CANCELLED, sessionId)));
         return true;
     }
 
