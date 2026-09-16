@@ -26,17 +26,15 @@ public class AgentFactory {
         return new DefaultAgent(applyLimits(config));
     }
 
-    /** 把子 agent 包装成一个工具，供主 agent 委派任务。 */
-    public Tool createSubAgentTool(String name, String description, Agent subAgent, String global) {
-        return new SubAgentTool(name, description, subAgent, global);
-    }
-
     private AgentConfig applyLimits(AgentConfig config) {
         int maxIterations = Math.min(config.maxIterations(), maxIterationsLimit);
         int maxTokens = Math.min(config.maxTokens(), maxTokensLimit);
         if (maxIterations == config.maxIterations() && maxTokens == config.maxTokens()) {
             return config;
         }
+        // 只改上限，其余字段必须原样带上：漏掉 eventPublisher 会让 agent 静默失去
+        // 所有监听器（历史不再落库），漏掉 budget 会让子 agent 拿到父预算当自己的上限。
+        // AgentConfig 新增字段时，这里要同步。
         return AgentConfig.builder()
                 .name(config.name())
                 .llmClient(config.llmClient())
@@ -45,6 +43,9 @@ public class AgentFactory {
                 .tools(config.tools())
                 .maxIterations(maxIterations)
                 .maxTokens(maxTokens)
+                .temperature(config.temperature())
+                .eventPublisher(config.eventPublisher())
+                .budget(config.budget())
                 .build();
     }
 }

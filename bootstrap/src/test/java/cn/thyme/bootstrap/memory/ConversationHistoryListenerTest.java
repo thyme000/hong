@@ -212,7 +212,7 @@ class ConversationHistoryListenerTest {
         toolCall(listener, "s-1", "call-1", "read_file");
         toolResult(listener, "s-1", "call-1", "read_file", "内容", true);
         listener.onEvent(new AgentEvent.Finished(
-                "s-1", Instant.now(), new AgentResult("done", 1, 0, false, "s-1")));
+                "s-1", Instant.now(), AgentResult.completed("done", 1, 0, "s-1")));
 
         assertEquals(0, listener.runtimeStateSize("s-1"), "Finished 之后不应再保留该会话的运行时缓存");
 

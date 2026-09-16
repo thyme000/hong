@@ -32,8 +32,13 @@ llm:
       models:
         - qwen3.5:9b
       temperature: 0.7
+      # 累计 token 预算：每轮工具调用结束后检查，越线就不再发起下一轮 LLM 调用；
+      # 不写则用 AgentConfig 的默认上限（100000）
+      max-tokens: 100000
     siliconflow:
       url: https://api.siliconflow.cn/v1
       models:
         - deepseek-ai/DeepSeek-V4-Flash
       temperature: 0.7
+      # 云端模型按量计费，不写则同样回落到默认上限
+      max-tokens: 50000

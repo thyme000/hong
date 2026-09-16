@@ -1,5 +1,6 @@
 package cn.thyme.bootstrap.event;
 
+import cn.thyme.agent.AgentStopReason;
 import cn.thyme.agent.event.AgentEvent;
 import cn.thyme.agent.event.AgentListener;
 import org.slf4j.Logger;
@@ -28,9 +29,12 @@ public class LoggingAgentListener implements AgentListener {
             case AgentEvent.ToolResult e ->
                     log.info("[{}] TOOL_RESULT {} {} -> {}", sid, e.ok() ? "OK" : "FAIL",
                             e.toolName(), nullSafe(e.result()));
-            case AgentEvent.Finished e ->
-                    log.info("[{}] FINISHED iterations={} tokens={}{}", sid, e.result().iterations(),
-                            e.result().totalTokens(), e.result().truncated() ? " (truncated)" : "");
+            case AgentEvent.Finished e -> {
+                String note = e.result().stopReason() == AgentStopReason.COMPLETED
+                        ? "" : " (无最终答案)";
+                log.info("[{}] FINISHED iterations={} tokens={} stop={}{}", sid,
+                        e.result().iterations(), e.result().totalTokens(), e.result().stopReason(), note);
+            }
         }
     }
 

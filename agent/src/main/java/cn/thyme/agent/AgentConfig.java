@@ -20,7 +20,8 @@ public record AgentConfig(
         int maxIterations,
         int maxTokens,
         Double temperature,
-        AgentEventPublisher eventPublisher) {
+        AgentEventPublisher eventPublisher,
+        AgentBudget budget) {
 
     public AgentConfig {
         Objects.requireNonNull(name, "name must not be null");
@@ -51,6 +52,7 @@ public record AgentConfig(
         private int maxTokens = 100000;
         private Double temperature;
         private AgentEventPublisher eventPublisher;
+        private AgentBudget budget;
 
         private Builder() {
         }
@@ -115,9 +117,15 @@ public record AgentConfig(
             return this;
         }
 
+        /** 父级划拨的预算；不设则由 {@link DefaultAgent} 按 maxTokens 自建。 */
+        public Builder budget(AgentBudget budget) {
+            this.budget = budget;
+            return this;
+        }
+
         public AgentConfig build() {
             return new AgentConfig(name, llmClient, model, systemPrompt,
-                    tools, maxIterations, maxTokens, temperature, eventPublisher);
+                    tools, maxIterations, maxTokens, temperature, eventPublisher, budget);
         }
     }
 }

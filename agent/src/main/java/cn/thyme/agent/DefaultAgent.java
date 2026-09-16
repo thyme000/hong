@@ -36,6 +36,10 @@ public class DefaultAgent implements Agent {
 
     @Override
     public AgentResult run(AgentContext context) {
+        // 父级传入的预算（共享全树用量）；顶层运行没有父级，就按本 agent 的 maxTokens 开一个
+        AgentBudget budget = config.budget() == null
+                ? new AgentBudget(config.maxTokens())
+                : config.budget();
         AgentEventPublisher publisher = config.eventPublisher();
         String sessionId = context.sessionId();
         publisher.begin();
@@ -54,21 +58,31 @@ public class DefaultAgent implements Agent {
             }
 
             int iterations = 0;
-            int totalTokens = 0;
+            List<LlmToolDefinition> toolDefinitions = toToolDefinitions();
 
             while (iterations < config.maxIterations()) {
+                // 调用前先估本次输入体积：单次调用的输入本身就可能超预算
+                // （历史很长、工具输出很大），光看已发生的用量拦不住「一轮烧干」。
+                // 不豁免首次调用——宁可空手而回，也不发出一开始就注定超额的请求。
+                int inputTokens = estimateInputTokens(messages, toolDefinitions);
+                if (inputTokens > budget.remaining()) {
+                    return finish(publisher, sessionId,
+                            AgentResult.truncated(iterations, budget.used(),
+                                    AgentStopReason.INPUT_BUDGET_EXCEEDED, sessionId));
+                }
+
                 iterations++;
 
                 LlmRequest request = LlmRequest.builder()
                         .model(config.model())
                         .messages(messages)
-                        .tools(toToolDefinitions())
+                        .tools(toolDefinitions)
                         .temperature(config.temperature())
                         .build();
 
                 LlmResponse response = config.llmClient().chat(request);
 
-                totalTokens += estimateTokens(response, messages);
+                budget.spend(usageOf(response, messages));
 
                 if (!response.hasToolCalls()) {
                     String content = response.content();
@@ -79,8 +93,8 @@ public class DefaultAgent implements Agent {
                                 "模型返回空内容（第 " + iterations + " 轮：既无工具调用也无文本）");
                     }
                     publisher.publish(new AgentEvent.Message(sessionId, Instant.now(), LlmRole.ASSISTANT, content));
-                    return finish(publisher, sessionId, new AgentResult(content, iterations, totalTokens, false,
-                            sessionId));
+                    return finish(publisher, sessionId,
+                            AgentResult.completed(content, iterations, budget.used(), sessionId));
                 }
 
                 messages.add(LlmMessage.assistantToolCall(response.toolCalls()));
@@ -89,21 +103,21 @@ public class DefaultAgent implements Agent {
                 for (LlmToolCall call : response.toolCalls()) {
                     publisher.publish(new AgentEvent.ToolCall(
                             sessionId, Instant.now(), call.id(), call.name(), call.arguments()));
-                    ToolResult result = executeTool(call, sessionId);
+                    ToolResult result = executeTool(call, sessionId, budget);
                     publisher.publish(new AgentEvent.ToolResult(
                             sessionId, Instant.now(), call.id(), call.name(), result.text(), result.ok()));
                     results.add(new LlmToolResult(call.id(), result.text(), !result.ok()));
                 }
                 messages.add(LlmMessage.toolResult(results));
 
-                if (totalTokens >= config.maxTokens()) {
-                    return finish(publisher, sessionId,
-                            new AgentResult("达到 token 上限", iterations, totalTokens, true, sessionId));
+                if (budget.remaining() <= 0) {
+                    return finish(publisher, sessionId, AgentResult.truncated(
+                            iterations, budget.used(), AgentStopReason.TOKEN_BUDGET, sessionId));
                 }
             }
 
-            return finish(publisher, sessionId,
-                    new AgentResult("达到轮次上限", iterations, totalTokens, true, sessionId));
+            return finish(publisher, sessionId, AgentResult.truncated(
+                    iterations, budget.used(), AgentStopReason.MAX_ITERATIONS, sessionId));
         } finally {
             publisher.end();
         }
@@ -135,15 +149,37 @@ public class DefaultAgent implements Agent {
         return sb.toString();
     }
 
-    private int estimateTokens(LlmResponse response, List<LlmMessage> messages) {
+    /**
+     * 本次调用的输入体积估算：chars/4 ≈ tokens（与 {@link #usageOf} 的字符口径一致）。
+     *
+     * <p>工具定义也计入——它们的体积固定但不可忽略。工具结果同样计入，且是最容易
+     * 漏掉的一块：它挂在 {@link LlmMessage#toolResults()} 上，{@code content} 为 null，
+     * 只累计 content 会把它整个跳过，恰恰漏掉了上下文里增长最快、体积最大的部分。</p>
+     */
+    private int estimateInputTokens(List<LlmMessage> messages, List<LlmToolDefinition> tools) {
+        int chars = messages.stream().mapToInt(DefaultAgent::messageChars).sum();
+        for (LlmToolDefinition tool : tools) {
+            chars += tool.name().length() + tool.description().length();
+        }
+        return chars / 4;
+    }
+
+    private int usageOf(LlmResponse response, List<LlmMessage> messages) {
         if (response.usage() != null) {
             return response.usage().totalTokens();
         }
-        int inputChars = messages.stream()
-                .mapToInt(m -> m.content() == null ? 0 : m.content().length())
-                .sum();
+        int inputChars = messages.stream().mapToInt(DefaultAgent::messageChars).sum();
         int outputChars = response.content() == null ? 0 : response.content().length();
-        return inputChars + outputChars;
+        return (inputChars + outputChars) / 4;
+    }
+
+    /** 一条消息承载的全部字符（含文本、工具调用参数与工具执行结果）。 */
+    private static int messageChars(LlmMessage message) {
+        int chars = message.content() == null ? 0 : message.content().length();
+        for (LlmToolResult result : message.toolResults()) {
+            chars += result.content() == null ? 0 : result.content().length();
+        }
+        return chars;
     }
 
     private List<LlmToolDefinition> toToolDefinitions() {
@@ -152,8 +188,8 @@ public class DefaultAgent implements Agent {
                 .toList();
     }
 
-    private ToolResult executeTool(LlmToolCall call, String sessionId) {
-        ToolContext context = new ToolContext(sessionId);
+    private ToolResult executeTool(LlmToolCall call, String sessionId, AgentBudget budget) {
+        ToolContext context = new ToolContext(sessionId, budget);
         for (Tool tool : config.tools()) {
             if (tool.name().equals(call.name())) {
                 try {

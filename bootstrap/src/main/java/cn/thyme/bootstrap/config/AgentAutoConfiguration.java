@@ -54,16 +54,20 @@ public class AgentAutoConfiguration {
         String provider = props.getDefaultProvider();
         LlmProperties.ProviderProperties p = props.getProviders().get(provider);
         String model = p.getModels().get(0);
-        AgentConfig config = AgentConfig.builder()
+
+        AgentConfig.Builder builder = AgentConfig.builder()
                 .name("hong")
                 .llmClient(llmClient)
                 .model(model)
                 .systemPromptClasspath(systemPromptFile)
                 .tools(tools)
                 .temperature(p.getTemperature())
-                .eventPublisher(eventPublisher)
-                .build();
-        return new AgentFactory().create(config);
+                .eventPublisher(eventPublisher);
+        // 未配置时保持 AgentConfig 的默认上限，不在这里补一个平行的默认值
+        if (p.getMaxTokens() != null) {
+            builder.maxTokens(p.getMaxTokens());
+        }
+        return new AgentFactory().create(builder.build());
     }
 
     private LlmClient createClient(String provider, LlmProperties.ProviderProperties p) {
