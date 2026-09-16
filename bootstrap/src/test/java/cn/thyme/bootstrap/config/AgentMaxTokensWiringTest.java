@@ -59,7 +59,7 @@ class AgentMaxTokensWiringTest {
         // 永远返回工具调用、每轮报 400 用量，因此循环只能靠预算刹车。
         // 工具名不存在也无妨——执行失败同样算「工具轮」，循环照常推进。
         AtomicInteger calls = new AtomicInteger();
-        given(llmClient.chat(any())).willAnswer(invocation -> new LlmResponse("fake-model", null,
+        given(llmClient.chat(any(), any())).willAnswer(invocation -> new LlmResponse("fake-model", null,
                 List.of(new LlmToolCall("c" + calls.incrementAndGet(), "noop", Map.of())),
                 new LlmUsage(400, 0)));
 

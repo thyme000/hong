@@ -1,6 +1,7 @@
 package cn.thyme.agent;
 
 import cn.thyme.llm.LlmClient;
+import cn.thyme.llm.model.LlmDelta;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmMessage;
 import cn.thyme.llm.model.LlmResponse;
@@ -10,6 +11,7 @@ import cn.thyme.tool.ToolContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -29,7 +31,7 @@ class SubAgentDelegationTest {
         private final AtomicInteger calls = new AtomicInteger();
 
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             if (calls.incrementAndGet() == 1) {
                 return new LlmResponse("m", null,
                         List.of(new LlmToolCall("c1", "delegate_task",
@@ -49,7 +51,7 @@ class SubAgentDelegationTest {
     }
 
     private static LlmClient subAgentClient(String answer, int usagePerCall) {
-        return request -> new LlmResponse("s", answer, List.of(), new LlmUsage(usagePerCall, 0));
+        return (request, deltaListener) -> new LlmResponse("s", answer, List.of(), new LlmUsage(usagePerCall, 0));
     }
 
     private static LlmRequest firstRequestOf(String task) {
@@ -97,7 +99,7 @@ class SubAgentDelegationTest {
         exhausted.spend(100);
 
         AtomicInteger subCalls = new AtomicInteger();
-        LlmClient counting = request -> {
+        LlmClient counting = (request, deltaListener) -> {
             subCalls.incrementAndGet();
             return new LlmResponse("s", "不该被调用", List.of(), null);
         };
@@ -119,7 +121,7 @@ class SubAgentDelegationTest {
     void 未识别档位应回落到默认档而不是失败() {
         AgentBudget parent = new AgentBudget(1000);
         AtomicInteger subCalls = new AtomicInteger();
-        LlmClient counting = request -> {
+        LlmClient counting = (request, deltaListener) -> {
             subCalls.incrementAndGet();
             return new LlmResponse("s", "完成", List.of(), null);
         };
@@ -142,7 +144,7 @@ class SubAgentDelegationTest {
         // 关键是不能沿用父会话的历史（否则污染父上下文）
         java.util.concurrent.atomic.AtomicReference<AgentContext> seen =
                 new java.util.concurrent.atomic.AtomicReference<>();
-        LlmClient capture = request -> new LlmResponse("s", "完成", List.of(), null);
+        LlmClient capture = (request, deltaListener) -> new LlmResponse("s", "完成", List.of(), null);
         Agent recording = context -> {
             seen.set(context);
             return new DefaultAgent(AgentConfig.builder()

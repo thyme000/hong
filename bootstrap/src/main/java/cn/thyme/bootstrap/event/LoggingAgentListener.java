@@ -24,6 +24,9 @@ public class LoggingAgentListener implements AgentListener {
                     log.info("[{}] START task={}", sid, nullSafe(e.task()));
             case AgentEvent.Message e ->
                     log.info("[{}] {}: {}", sid, e.role(), nullSafe(e.content()));
+            // 增量只用于实时展示，量极大（一次回答上百条），落日志会淹没其它事件
+            case AgentEvent.Delta e -> {
+            }
             case AgentEvent.ToolCall e ->
                     log.info("[{}] TOOL_CALL {} {}", sid, e.toolName(), e.arguments());
             case AgentEvent.ToolResult e ->

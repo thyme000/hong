@@ -1,6 +1,7 @@
 package cn.thyme.agent;
 
 import cn.thyme.llm.LlmClient;
+import cn.thyme.llm.model.LlmDelta;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmResponse;
 import cn.thyme.llm.model.LlmToolCall;
@@ -8,6 +9,7 @@ import cn.thyme.llm.model.LlmUsage;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -31,7 +33,7 @@ class DefaultAgentResultTest {
     /** 固定返回同一内容的假客户端。 */
     private record StubLlmClient(LlmResponse response) implements LlmClient {
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             return response;
         }
     }
@@ -41,7 +43,7 @@ class DefaultAgentResultTest {
         private final AtomicInteger calls = new AtomicInteger();
 
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             int n = calls.incrementAndGet();
             return new LlmResponse("test-model", null,
                     List.of(new LlmToolCall("call-" + n, "unknown_tool", Map.of())), null);
@@ -57,7 +59,7 @@ class DefaultAgentResultTest {
         private final AtomicInteger calls = new AtomicInteger();
 
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             int n = calls.incrementAndGet();
             return new LlmResponse("test-model", null,
                     List.of(new LlmToolCall("call-" + n, "unknown_tool", Map.of())),
@@ -137,7 +139,7 @@ class DefaultAgentResultTest {
     @Test
     void 输入估算越线时应以INPUT_BUDGET_EXCEEDED中断且一次调用都不发() {
         AtomicInteger calls = new AtomicInteger();
-        LlmClient counting = request -> {
+        LlmClient counting = (request, deltaListener) -> {
             calls.incrementAndGet();
             return new LlmResponse("test-model", "不该被调用", List.of(), null);
         };

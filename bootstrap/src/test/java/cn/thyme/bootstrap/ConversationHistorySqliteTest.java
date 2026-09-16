@@ -28,6 +28,7 @@ import org.springframework.test.context.TestPropertySource;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -73,7 +74,7 @@ class ConversationHistorySqliteTest {
         AgentEventPublisher publisher = new AgentEventPublisher(List.of(listener));
 
         // 假 LlmClient：直接返回文本，不调真实模型
-        LlmClient fakeClient = request -> new LlmResponse("fake-model", "这是测试回复", List.of(), null);
+        LlmClient fakeClient = (request, deltaListener) -> new LlmResponse("fake-model", "这是测试回复", List.of(), null);
 
         AgentConfig config = AgentConfig.builder()
                 .name("test")

@@ -1,6 +1,8 @@
 package cn.thyme.agent;
 
+import cn.thyme.agent.event.AgentListener;
 import cn.thyme.llm.model.LlmMessage;
+import cn.thyme.llm.model.ThinkingLevel;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,9 +21,15 @@ import java.util.UUID;
  *       子 agent 应沿用父会话的值，否则它看不到用户上传给父会话的文件。</li>
  * </ul>
  * 不显式设置时 workspaceSessionId 跟随 sessionId（顶层运行的常见情形）。
+ *
+ * <p>另有两个<b>按次运行</b>而非按 agent 配置的开关：{@code listeners} 让某一次运行
+ * 只发给特定监听器（流式端点据此把事件推给本次请求的连接），{@code thinking} 由调用方
+ * 按轮次决定是否开启深度思考。二者都放在 context 而不是 {@link AgentConfig}——同一次
+ * 部署里不同请求的取值本就不同，配置项表达不了。</p>
  */
 public record AgentContext(String global, String task, List<LlmMessage> history,
-                           String sessionId, String workspaceSessionId) {
+                           String sessionId, String workspaceSessionId,
+                           List<AgentListener> listeners, ThinkingLevel thinking) {
 
     public AgentContext {
         global = global == null ? "" : global;
@@ -29,11 +37,12 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
         sessionId = sessionId == null || sessionId.isEmpty() ? UUID.randomUUID().toString() : sessionId;
         workspaceSessionId = workspaceSessionId == null || workspaceSessionId.isEmpty()
                 ? sessionId : workspaceSessionId;
+        listeners = listeners == null ? List.of() : List.copyOf(listeners);
     }
 
-    /** 只有会话 id 的简写：工作区随之。 */
+    /** 只有会话 id 的简写：工作区随之，监听器用全局，思考关闭。 */
     public AgentContext(String global, String task, List<LlmMessage> history, String sessionId) {
-        this(global, task, history, sessionId, sessionId);
+        this(global, task, history, sessionId, sessionId, null, null);
     }
 
     public static Builder builder() {
@@ -46,6 +55,8 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
         private final List<LlmMessage> history = new ArrayList<>();
         private String sessionId;
         private String workspaceSessionId;
+        private List<AgentListener> listeners;
+        private ThinkingLevel thinking;
 
         private Builder() {
         }
@@ -83,8 +94,21 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
             return this;
         }
 
+        /** 本次运行专属的监听器；不设或传空则使用全局监听器。 */
+        public Builder listeners(List<AgentListener> listeners) {
+            this.listeners = listeners;
+            return this;
+        }
+
+        /** 深度思考档位；null 表示关闭（默认）。 */
+        public Builder thinking(ThinkingLevel thinking) {
+            this.thinking = thinking;
+            return this;
+        }
+
         public AgentContext build() {
-            return new AgentContext(global, task, List.copyOf(history), sessionId, workspaceSessionId);
+            return new AgentContext(global, task, List.copyOf(history), sessionId,
+                    workspaceSessionId, listeners, thinking);
         }
     }
 }

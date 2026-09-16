@@ -2,6 +2,7 @@ package cn.thyme.agent;
 
 import cn.thyme.llm.LlmClient;
 import cn.thyme.llm.model.LlmMessage;
+import cn.thyme.llm.model.LlmDelta;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmResponse;
 import cn.thyme.llm.model.LlmToolCall;
@@ -14,6 +15,7 @@ import cn.thyme.tool.security.Capability;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -74,7 +76,7 @@ class DefaultAgentBudgetTest {
         private final AtomicInteger calls = new AtomicInteger();
 
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             if (calls.incrementAndGet() == 1) {
                 return new LlmResponse("m", null,
                         List.of(new LlmToolCall("c1", "noop", Map.of())), new LlmUsage(600, 0));
@@ -98,7 +100,7 @@ class DefaultAgentBudgetTest {
         }
 
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             Integer usage = usagePerCall < 0 ? null : usagePerCall;
             return new LlmResponse("m", null,
                     List.of(new LlmToolCall("c" + calls.incrementAndGet(), "noop", Map.of())),
@@ -109,7 +111,7 @@ class DefaultAgentBudgetTest {
     /** 无用量信息，逼走字符估算路径。 */
     private static final class NoUsageEchoClient implements LlmClient {
         @Override
-        public LlmResponse chat(LlmRequest request) {
+        public LlmResponse chat(LlmRequest request, Consumer<LlmDelta> deltaListener) {
             String echoed = request.messages().stream()
                     .map(LlmMessage::content)
                     .filter(c -> c != null)

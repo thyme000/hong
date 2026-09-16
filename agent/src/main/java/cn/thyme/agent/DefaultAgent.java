@@ -2,6 +2,7 @@ package cn.thyme.agent;
 
 import cn.thyme.agent.event.AgentEvent;
 import cn.thyme.agent.event.AgentEventPublisher;
+import cn.thyme.llm.model.LlmDelta;
 import cn.thyme.llm.model.LlmMessage;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmResponse;
@@ -42,7 +43,9 @@ public class DefaultAgent implements Agent {
                 : config.budget();
         AgentEventPublisher publisher = config.eventPublisher();
         String sessionId = context.sessionId();
-        publisher.begin();
+        // 本次运行可能带专属监听器（流式端点把事件推给本次请求的连接）；
+        // 不设则沿用全局监听器
+        publisher.begin(context.listeners());
         try {
             publisher.publish(new AgentEvent.Started(sessionId, Instant.now(), context.task()));
 
@@ -78,9 +81,14 @@ public class DefaultAgent implements Agent {
                         .messages(messages)
                         .tools(toolDefinitions)
                         .temperature(config.temperature())
+                        .thinking(context.thinking())
                         .build();
 
-                LlmResponse response = config.llmClient().chat(request);
+                // 模型产出增量即转发为事件：agent 只做搬运，具体是渲染成 SSE
+                // 还是丢弃由监听器决定，本类不需要知道流式传输的存在
+                LlmResponse response = config.llmClient().chat(request, delta ->
+                        publisher.publish(new AgentEvent.Delta(sessionId, Instant.now(),
+                                delta.text(), delta.kind() == LlmDelta.Kind.REASONING)));
 
                 budget.spend(usageOf(response, messages));
 
