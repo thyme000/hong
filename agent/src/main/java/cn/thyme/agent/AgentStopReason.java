@@ -17,7 +17,15 @@ public enum AgentStopReason {
     TOKEN_BUDGET,
 
     /** 预计本次调用的输入本身就超出预算，未发起该次调用。 */
-    INPUT_BUDGET_EXCEEDED;
+    INPUT_BUDGET_EXCEEDED,
+
+    /**
+     * 被调用方主动中断（用户点了停止、连接断开）。
+     *
+     * <p>半截回答一律丢弃：中断可能发生在任意一个增量之间，拼出来的残句既不是
+     * 模型的完整输出，也会在下次回注历史时被当成一轮正常回答。</p>
+     */
+    CANCELLED;
 
     /** 是否因上限被打断（此时没有最终答案）。 */
     public boolean isTruncated() {

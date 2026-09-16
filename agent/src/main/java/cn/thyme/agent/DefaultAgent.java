@@ -43,6 +43,9 @@ public class DefaultAgent implements Agent {
                 : config.budget();
         AgentEventPublisher publisher = config.eventPublisher();
         String sessionId = context.sessionId();
+        // 提到 try 之外：被取消时要把「跑到第几轮」和已用预算一起回报，
+        // 而这两个值本身就是 Cancel 异常带不回来的信息
+        int iterations = 0;
         // 本次运行可能带专属监听器（流式端点把事件推给本次请求的连接）；
         // 不设则沿用全局监听器
         publisher.begin(context.listeners());
@@ -60,7 +63,6 @@ public class DefaultAgent implements Agent {
                 publisher.publish(new AgentEvent.Message(sessionId, Instant.now(), LlmRole.USER, context.task()));
             }
 
-            int iterations = 0;
             List<LlmToolDefinition> toolDefinitions = toToolDefinitions();
 
             while (iterations < config.maxIterations()) {
@@ -128,6 +130,11 @@ public class DefaultAgent implements Agent {
 
             return finish(publisher, sessionId, AgentResult.truncated(
                     iterations, budget.used(), AgentStopReason.MAX_ITERATIONS, sessionId));
+        } catch (AgentCancelledException e) {
+            // 就地转成结果而不是上抛：调用方要的是「跑到第几轮、花了多少 token」，
+            // 这些值只有这里知道。半截文本天然被丢弃——中断在发布 Message 之前发生
+            return finish(publisher, sessionId, AgentResult.truncated(
+                    iterations, budget.used(), AgentStopReason.CANCELLED, sessionId));
         } finally {
             publisher.end();
         }
