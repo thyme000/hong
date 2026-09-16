@@ -105,9 +105,28 @@ class OpenAiCompatibleClientStreamTest {
         assertEquals("答案是 42", response.content());
     }
 
+    /**
+     * Ollama 的 OpenAI 兼容层把思考放在 {@code delta.reasoning}，而不是 DeepSeek /
+     * vLLM 系的 {@code reasoning_content}。只认后者会让 Ollama 上的思考被静默丢掉：
+     * 不报错，只是 reasoning 帧永远不出现。
+     */
     @Test
-    void 空增量不回调() {
-        willRespondWith(frame("{\"content\":\"\"}")
+    void 思考字段名为reasoning时也应回调() {
+        willRespondWith(frame("{\"reasoning\":\"先算一下\"}")
+                + frame("{\"reasoning\":\"算完了\"}")
+                + frame("{\"content\":\"答案是 42\"}")
+                + "data: [DONE]\n\n");
+
+        List<LlmDelta> deltas = new ArrayList<>();
+        LlmResponse response = chat(deltas);
+
+        List<LlmDelta> reasoning = deltas.stream().filter(d -> d.kind() == LlmDelta.Kind.REASONING).toList();
+        assertEquals(List.of("先算一下", "算完了"), reasoning.stream().map(LlmDelta::text).toList());
+        assertEquals("答案是 42", response.content());
+    }
+
+    @Test
+    void 空增量不回调() {        willRespondWith(frame("{\"content\":\"\"}")
                 + frame("{\"content\":\"有内容\"}")
                 + "data: [DONE]\n\n");
 

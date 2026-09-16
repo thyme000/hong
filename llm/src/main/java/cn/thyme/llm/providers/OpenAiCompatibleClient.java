@@ -145,7 +145,11 @@ public class OpenAiCompatibleClient implements LlmClient {
             if (delta == null || delta.isNull()) {
                 continue;
             }
-            emit(reasoning, textOrNull(delta.get("reasoning_content")), LlmDelta.Kind.REASONING, deltaListener);
+            // 思考增量的字段名各厂商不统一：DeepSeek / vLLM / 硅基流动用
+            // reasoning_content，而 Ollama 的 OpenAI 兼容层用 reasoning。
+            // 只认其中一个会让另一家的思考被静默丢掉——不报错、帧就是不出现
+            emit(reasoning, firstText(delta, "reasoning_content", "reasoning"),
+                    LlmDelta.Kind.REASONING, deltaListener);
             emit(content, textOrNull(delta.get("content")), LlmDelta.Kind.CONTENT, deltaListener);
             accumulateToolCalls(toolCalls, delta.get("tool_calls"));
         }
@@ -346,5 +350,16 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     private static String textOrNull(JsonNode node) {
         return node == null || node.isNull() ? null : node.asText();
+    }
+
+    /** 按顺序取第一个非空文本字段；用于同一语义有多种字段名的情形。 */
+    private static String firstText(JsonNode node, String... names) {
+        for (String name : names) {
+            String text = textOrNull(node.get(name));
+            if (text != null && !text.isEmpty()) {
+                return text;
+            }
+        }
+        return null;
     }
 }
