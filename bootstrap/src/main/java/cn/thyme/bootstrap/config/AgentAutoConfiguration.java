@@ -5,6 +5,8 @@ import cn.thyme.agent.AgentConfig;
 import cn.thyme.agent.AgentFactory;
 import cn.thyme.agent.event.AgentEventPublisher;
 import cn.thyme.agent.event.AgentListener;
+import cn.thyme.bootstrap.stream.ActiveRuns;
+import cn.thyme.bootstrap.stream.SessionRunQueue;
 import cn.thyme.llm.LlmClient;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.providers.OllamaLlmClient;
@@ -15,8 +17,13 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 主 agent 装配：读 {@link LlmProperties} 的默认提供商创建 {@link LlmClient}
@@ -36,6 +43,40 @@ public class AgentAutoConfiguration {
     @Bean
     public AgentEventPublisher agentEventPublisher(List<AgentListener> listeners) {
         return new AgentEventPublisher(listeners);
+    }
+
+    /**
+     * 流式运行的发送线程池：每条并发会话占一个线程（模型调用是阻塞式的）。
+     * 用有界队列 + CallerRunsPolicy，负载满时让提交方自己跑，天然形成背压，
+     * 而不是静默丢任务或无限堆积。
+     */
+    @Bean(destroyMethod = "shutdown")
+    public ExecutorService agentRunExecutor(
+            @Value("${agent.stream.threads:8}") int threads,
+            @Value("${agent.stream.queue-capacity:64}") int queueCapacity) {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                threads, threads, 60L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "agent-run");
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    /** 同一会话的任务排队串行；跨会话并行。 */
+    @Bean
+    public SessionRunQueue sessionRunQueue(ExecutorService agentRunExecutor) {
+        return new SessionRunQueue(agentRunExecutor);
+    }
+
+    /** 活跃流式运行登记 + 心跳；心跳间隔为 0 表示关闭（测试用）。 */
+    @Bean(destroyMethod = "shutdown")
+    public ActiveRuns activeRuns(@Value("${agent.stream.heartbeat:15s}") Duration heartbeat) {
+        return new ActiveRuns(heartbeat);
     }
 
     @Bean

@@ -57,18 +57,30 @@ public class AgentController {
      */
     @PostMapping("/agent/chat")
     public AgentResult chat(@RequestBody Map<String, String> body) {
+        String sessionId = requireSessionId(body);
+        return mainAgent.run(contextFor(sessionId, body.get("task")));
+    }
+
+    /**
+     * 组装一次运行的上下文：回注该会话历史，使多轮对话连续。
+     * 同步与流式两个入口共用，避免两处各维护一份「取历史 + 建 context」的逻辑。
+     */
+    AgentContext contextFor(String sessionId, String task) {
+        List<MemoryRecord> records = history.history(sessionId);
+        return AgentContext.builder()
+                .task(task)
+                .sessionId(sessionId)
+                .history(historyRenderer.render(records))
+                .build();
+    }
+
+    /** 校验并取出 sessionId；缺了就报同一句可操作的错。 */
+    static String requireSessionId(Map<String, String> body) {
         String sessionId = body.get("sessionId");
         if (sessionId == null || sessionId.isBlank()) {
             throw new IllegalArgumentException("缺少 sessionId，请先调用 POST /agent/sessions 建会话");
         }
-
-        List<MemoryRecord> records = history.history(sessionId);
-        AgentContext context = AgentContext.builder()
-                .task(body.get("task"))
-                .sessionId(sessionId)
-                .history(historyRenderer.render(records))
-                .build();
-        return mainAgent.run(context);
+        return sessionId;
     }
 
     /** 列出全部会话 id。 */
