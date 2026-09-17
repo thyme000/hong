@@ -8,6 +8,11 @@ spring:
 
 mybatis:
   mapper-locations: classpath*:/mapper/**/*.xml
+  # MyBatis-Spring-Boot-Starter 3.0 起不再默认开启；不开则 snake_case 列
+  # （created_at）映射不到驼峰属性（createdAt），读回来是默认值而不报错。
+  # MemoryRow 全是单字列名所以一直没暴露这个坑
+  configuration:
+    map-underscore-to-camel-case: true
 
 # 上传文件的会话沙箱根目录，每个会话一个子目录；目录由上传行为惰性创建
 tool:

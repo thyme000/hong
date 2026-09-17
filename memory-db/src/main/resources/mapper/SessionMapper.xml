@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.thyme.memory.db.SessionMapper">
+
+    <!--
+      方言策略：声明加载分两趟（先收 databaseId 等于当前值的语句，再收无标签的），
+      且带标签的语句不会回退到同名无标签语句。故不变式是——每个方法要么只在公共
+      区里出现一次，要么在下面三个方言块里全都出现。
+
+      这里刻意把三个方言写进同一个文件：这条不变式可以在一处肉眼核对完。拆成 4 个
+      文件时「某方言漏了一条语句」只会在那个方言下启动时炸，而本项目没有任何
+      活体 H2 / PostgreSQL 测试会替你发现。
+    -->
+
+    <select id="findById" resultType="cn.thyme.memory.db.SessionRow">
+        SELECT id, title, title_source, created_at, updated_at
+        FROM session_record
+        WHERE id = #{id}
+    </select>
+
+    <select id="listByUpdatedAtDesc" resultType="cn.thyme.memory.db.SessionRow">
+        SELECT id, title, title_source, created_at, updated_at
+        FROM session_record
+        ORDER BY updated_at DESC, id DESC
+    </select>
+
+    <update id="rename">
+        UPDATE session_record
+        SET title = #{title}, title_source = #{titleSource}, updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 条件写进 WHERE：与用户改名的并发抢用一条语句解决 -->
+    <update id="updateTitleIfAuto">
+        UPDATE session_record
+        SET title = #{title}, title_source = #{titleSource}, updated_at = #{updatedAt}
+        WHERE id = #{id} AND title_source = #{autoSource}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM session_record WHERE id = #{id}
+    </delete>
+
+    <!-- SQLite 方言：ON CONFLICT DO NOTHING。用 DO NOTHING 而非 DO UPDATE，
+         本语句的全部意义就是「已存在则原样不动」 -->
+    <insert id="insertIfAbsent" databaseId="sqlite">
+        INSERT INTO session_record (id, title, title_source, created_at, updated_at)
+        VALUES (#{id}, #{title}, #{titleSource}, #{createdAt}, #{updatedAt})
+        ON CONFLICT (id) DO NOTHING
+    </insert>
+
+    <!-- PostgreSQL 方言：同 SQLite -->
+    <insert id="insertIfAbsent" databaseId="postgresql">
+        INSERT INTO session_record (id, title, title_source, created_at, updated_at)
+        VALUES (#{id}, #{title}, #{titleSource}, #{createdAt}, #{updatedAt})
+        ON CONFLICT (id) DO NOTHING
+    </insert>
+
+    <!-- H2 方言：无 ON CONFLICT；也不能用 MERGE（那是 upsert，会把已有标题冲掉）。
+         NOT EXISTS 在极端并发下两线程可能都通过检查、其中一个撞主键，由
+         DatabaseSessionStore 捕获后视为「已存在」 -->
+    <insert id="insertIfAbsent" databaseId="h2">
+        INSERT INTO session_record (id, title, title_source, created_at, updated_at)
+        SELECT #{id}, #{title}, #{titleSource}, #{createdAt}, #{updatedAt}
+        WHERE NOT EXISTS (SELECT 1 FROM session_record WHERE id = #{id})
+    </insert>
+
+</mapper>
