@@ -79,15 +79,6 @@ public class ConversationHistoryListener implements AgentListener {
         return (counters.containsKey(sessionId) ? 1 : 0) + (pendingToolCalls.containsKey(sessionId) ? 1 : 0);
     }
 
-    /** 全部会话 id（去重、排序）。 */
-    public List<String> sessions() {
-        return store.query(MemoryQuery.builder().eq("type", TYPE_MESSAGE).build()).stream()
-                .map(r -> String.valueOf(r.metadata().get("sessionId")))
-                .distinct()
-                .sorted()
-                .toList();
-    }
-
     /** 某会话的全部消息，按 seq 排序。 */
     public List<MemoryRecord> history(String sessionId) {
         return store.query(MemoryQuery.builder().eq("sessionId", sessionId).build()).stream()

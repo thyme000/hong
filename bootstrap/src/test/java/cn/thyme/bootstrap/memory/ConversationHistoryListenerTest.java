@@ -160,15 +160,19 @@ class ConversationHistoryListenerTest {
     }
 
     @Test
-    @DisplayName("会话 id 按序返回且去重")
-    void listsSessions() {
+    @DisplayName("会话历史按 seq 升序，跨会话互不干扰")
+    void keepsSessionsSeparate() {
         ConversationHistoryListener listener = new ConversationHistoryListener(store());
 
         message(listener, "s-2", LlmRole.USER, "b");
         message(listener, "s-1", LlmRole.USER, "a");
         message(listener, "s-1", LlmRole.ASSISTANT, "a2");
 
-        assertEquals(List.of("s-1", "s-2"), listener.sessions());
+        // 「列出全部会话」已由 SessionStore 承担（会话是一等实体，不再从消息反推），
+        // 这里只钉住按 id 取历史这条仍在用的路径
+        assertEquals(List.of(1L, 2L), seqs(listener.history("s-1")));
+        assertEquals(List.of(1L), seqs(listener.history("s-2")));
+        assertTrue(listener.history("从未存在过").isEmpty());
     }
 
     @Test

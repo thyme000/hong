@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 会话历史验证：agent 发出的事件经监听器落到 SQLite，可按会话回看。
@@ -99,6 +98,6 @@ class ConversationHistorySqliteTest {
         assertEquals("ASSISTANT", history.get(1).metadata().get("role"));
         assertEquals("这是测试回复", history.get(1).content());
 
-        assertTrue(listener.sessions().contains("s-test"));
+        // 会话列表接口已改由 SessionStore 承载，这里不再断言从消息反推出的列表
     }
 }

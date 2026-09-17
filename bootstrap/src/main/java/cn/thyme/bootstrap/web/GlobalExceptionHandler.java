@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 /**
  * 全局异常处理：统一记录日志并返回结构化错误响应，取代散落在各 Controller 里的
@@ -36,6 +37,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> onIllegalArgument(IllegalArgumentException e) {
         log.warn("请求参数非法: {}", e.getMessage());
         return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+    }
+
+    /**
+     * 目标资源不存在（如 PATCH 一个从未对话过的会话）。
+     *
+     * <p>必须显式处理：{@code NoSuchElementException} 继承自 {@code RuntimeException}，
+     * 落到下面的兜底分支会变成 500，而这是调用方可以修正的问题。前端的乐观 UI
+     * 也靠 404 决定回滚。</p>
+     */
+    @ExceptionHandler(NoSuchElementException.class)
+    public ResponseEntity<Map<String, String>> onNotFound(NoSuchElementException e) {
+        log.warn("目标不存在: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
     }
 
     /** 模型返回空响应：可重试，不是服务端 bug，记 WARN 并回 502。 */

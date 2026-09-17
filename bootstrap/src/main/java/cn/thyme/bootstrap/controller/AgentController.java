@@ -9,6 +9,7 @@ import cn.thyme.bootstrap.workspace.SessionWorkspace;
 import cn.thyme.bootstrap.workspace.WorkspaceException;
 import cn.thyme.bootstrap.workspace.WorkspaceFile;
 import cn.thyme.memory.MemoryRecord;
+import cn.thyme.memory.Session;
 import cn.thyme.memory.SessionStore;
 import cn.thyme.memory.SessionTitle;
 import cn.thyme.memory.TitleSource;
@@ -16,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,6 +29,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 /**
@@ -34,6 +37,17 @@ import java.util.UUID;
  *
  * <p>会话生命周期：{@link #createSession()} 建会话拿到 id → 前端保存并在此后
  * 每次对话与上传时带上 → 服务端据此回注历史、定位沙箱。</p>
+ *
+ * <p><b>建会话不落盘</b>：{@link #createSession()} 只返回一个 UUID，元信息行由
+ * {@link #contextFor} 在该会话第一次真正提交任务时惰性建立。因此「建了 N 个会话
+ * 就该在列表里看到 N 条」不成立——前端的乐观 UI 不能在创建时就插行。</p>
+ *
+ * <p>标题的 {@code titleSource} 三态（{@code auto}/{@code generated}/{@code user}）：
+ * 占位标题是 {@code auto}，模型的改写只在 {@code auto} 上成功，用户 {@code PATCH}
+ * 过之后即 {@code user}、不再被改写覆盖。</p>
+ *
+ * <p><b>不转义标题</b>：本接口返回 JSON，服务端做 HTML 转义会与前端的转义叠加成
+ * 双重转义。标题属不可信文本这一点是前端契约。</p>
  */
 @RestController
 public class AgentController {
@@ -115,10 +129,19 @@ public class AgentController {
         return sessionId;
     }
 
-    /** 列出全部会话 id。 */
+    /**
+     * 列出全部会话的元信息，按最近更新倒序。
+     *
+     * <p><b>只列顶层会话</b>：子 agent 派生的子会话在 session 表里没有行（占位行只在
+     * {@link #contextFor} 里建，那是顶层运行的入口），因此天然不出现在列表里。它的历史
+     * 仍可按 id 打开——见 {@link #session(String)}。「不在列表里但打得开」是有意为之。</p>
+     *
+     * <p>{@code createdAt}/{@code updatedAt} 直接给 epoch 毫秒，不转 ISO：排序保证在
+     * SQL 里、展示格式在前端，{@code new Date(ms)} 是 JS 消费方最不意外的形式。</p>
+     */
     @GetMapping("/agent/sessions")
-    public List<String> sessions() {
-        return history.sessions();
+    public List<Map<String, Object>> sessions() {
+        return sessions.list().stream().map(AgentController::toDto).toList();
     }
 
     /** 查看某会话的完整交互记录。 */
@@ -132,12 +155,54 @@ public class AgentController {
                 .toList();
     }
 
-    /** 删除会话：连同其历史消息与沙箱文件一并清除。 */
+    /**
+     * 会话元信息 → 响应体。
+     *
+     * <p>只从 {@link Session} 拼、绝不直接从 {@code SessionRow} 拼：{@code Session} 的
+     * 紧凑构造器已经把 title/titleSource/时间戳的 null 归一过，而 {@code Map.of} 遇 null
+     * 值会抛 NPE——归一化只发生一次，在正确的地方。</p>
+     *
+     * <p>{@code titleSource} 给小写线格式而非枚举名：与库里那一列逐字一致，
+     * 排查时不用在两种大小写之间换算。</p>
+     */
+    private static Map<String, Object> toDto(Session session) {
+        return Map.of(
+                "id", session.id(),
+                "title", session.title(),
+                "titleSource", session.titleSource().wire(),
+                "createdAt", session.createdAt().toEpochMilli(),
+                "updatedAt", session.updatedAt().toEpochMilli());
+    }
+
+    /**
+     * 用户手工改名：写 title 并标记来源为 {@code user}，此后自动改写不再覆盖它。
+     *
+     * <p>未知会话回 404 而不是 200——前端的乐观 UI 靠状态码决定要不要回滚，
+     * 静默成功会让它显示一个服务端并不存在的标题。</p>
+     */
+    @PatchMapping("/agent/sessions/{sessionId}")
+    public Map<String, Object> renameSession(@PathVariable String sessionId,
+                                             @RequestBody Map<String, String> body) {
+        String title = body == null ? null : body.get("title");
+        if (title == null || title.isBlank()) {
+            throw new IllegalArgumentException("标题不能为空");
+        }
+        if (!sessions.rename(sessionId, title.strip(), Instant.now())) {
+            throw new NoSuchElementException("会话不存在: " + sessionId);
+        }
+        return toDto(sessions.get(sessionId).orElseThrow());
+    }
+
+    /** 删除会话：连同其历史消息、元信息与沙箱文件一并清除。 */
     @DeleteMapping("/agent/sessions/{sessionId}")
     public Map<String, Object> deleteSession(@PathVariable String sessionId) {
         int messages = history.deleteSession(sessionId);
+        // 元信息可能本就不存在（会话建了但从未对话过），所以这里不报 404
+        boolean sessionDeleted = sessions.delete(sessionId);
         workspace.deleteSession(sessionId);
-        return Map.of("sessionId", sessionId, "deletedMessages", messages);
+        return Map.of("sessionId", sessionId,
+                "deletedMessages", messages,
+                "deletedSession", sessionDeleted);
     }
 
     /** 列出会话内已上传的文件。 */
