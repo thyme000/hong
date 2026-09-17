@@ -9,6 +9,11 @@ import cn.thyme.bootstrap.workspace.SessionWorkspace;
 import cn.thyme.bootstrap.workspace.WorkspaceException;
 import cn.thyme.bootstrap.workspace.WorkspaceFile;
 import cn.thyme.memory.MemoryRecord;
+import cn.thyme.memory.SessionStore;
+import cn.thyme.memory.SessionTitle;
+import cn.thyme.memory.TitleSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -32,17 +38,22 @@ import java.util.UUID;
 @RestController
 public class AgentController {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentController.class);
+
     private final Agent mainAgent;
     private final ConversationHistoryListener history;
     private final HistoryRenderer historyRenderer;
     private final SessionWorkspace workspace;
+    private final SessionStore sessions;
 
     public AgentController(Agent mainAgent, ConversationHistoryListener history,
-                           HistoryRenderer historyRenderer, SessionWorkspace workspace) {
+                           HistoryRenderer historyRenderer, SessionWorkspace workspace,
+                           SessionStore sessions) {
         this.mainAgent = mainAgent;
         this.history = history;
         this.historyRenderer = historyRenderer;
         this.workspace = workspace;
+        this.sessions = sessions;
     }
 
     /** 新建一个会话，返回其 id。不落盘，首次上传文件时才创建会话目录。 */
@@ -66,12 +77,33 @@ public class AgentController {
      * 同步与流式两个入口共用，避免两处各维护一份「取历史 + 建 context」的逻辑。
      */
     AgentContext contextFor(String sessionId, String task) {
+        ensureSession(sessionId, task);
         List<MemoryRecord> records = history.history(sessionId);
         return AgentContext.builder()
                 .task(task)
                 .sessionId(sessionId)
                 .history(historyRenderer.render(records))
                 .build();
+    }
+
+    /**
+     * 惰性建立会话元信息：某个会话第一次提交任务时才落一行，标题取首条提问的截断。
+     * 「不覆盖」由 {@link SessionStore#createIfAbsent} 保证，因此后续每轮调用都是空操作，
+     * 用户改过的标题不会被每轮打回占位标题。
+     *
+     * <p>{@code POST /agent/sessions} 仍不落盘——建会话只返回一个 id，只有当它真的
+     * 被用来对话时才会出现在列表里。</p>
+     *
+     * <p>例外必须就地吞掉：本方法在用户请求路径上，一次瞬时 {@code SQLITE_BUSY}
+     * 不能把整轮对话变成 500。代价是这次会话暂时没有列表条目——<b>不可见地降级
+     * 好过整轮失败</b>。</p>
+     */
+    private void ensureSession(String sessionId, String task) {
+        try {
+            sessions.createIfAbsent(sessionId, SessionTitle.placeholder(task), TitleSource.AUTO, Instant.now());
+        } catch (RuntimeException e) {
+            log.warn("建立会话 {} 的元信息失败，本轮对话继续: {}", sessionId, e.getMessage());
+        }
     }
 
     /** 校验并取出 sessionId；缺了就报同一句可操作的错。 */

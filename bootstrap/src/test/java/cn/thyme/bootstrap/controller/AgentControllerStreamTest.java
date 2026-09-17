@@ -15,6 +15,7 @@ import cn.thyme.bootstrap.stream.SessionRunQueue;
 import cn.thyme.bootstrap.web.GlobalExceptionHandler;
 import cn.thyme.bootstrap.workspace.SessionWorkspace;
 import cn.thyme.llm.model.LlmRole;
+import cn.thyme.memory.InMemorySessionStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -85,7 +86,8 @@ class AgentControllerStreamTest {
         given(history.history(any())).willReturn(List.of());
 
         AgentController sync = new AgentController(
-                agent, history, new HistoryRenderer(), new SessionWorkspace(tempDir.toString()));
+                agent, history, new HistoryRenderer(), new SessionWorkspace(tempDir.toString()),
+                new InMemorySessionStore());
         StreamingAgentController streaming = new StreamingAgentController(
                 agent, sync, queue, activeRuns, List.of());
 

@@ -13,7 +13,10 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
 
 import java.time.Instant;
+import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -51,8 +54,17 @@ class SessionStoreWiringDatabaseTest {
 
         assertInstanceOf(DatabaseSessionStore.class, sessionStore);
 
+        // id 每次跑都不一样：sqlite 文件在 target/ 下跨轮次保留，写死 id 的话
+        // 第二轮起 createIfAbsent 会因为「行已存在」而返回 false，测试从此恒失败
+        String id = "wiring-" + UUID.randomUUID();
+
         // 写一行成功即证明 session_record 已建好；表不存在会抛 SQLException
-        assertTrue(sessionStore.createIfAbsent("wiring-1", "接线测试", TitleSource.AUTO, Instant.now()));
-        assertTrue(sessionStore.get("wiring-1").isPresent());
+        assertTrue(sessionStore.createIfAbsent(id, "接线测试", TitleSource.AUTO, Instant.now()));
+        assertTrue(sessionStore.get(id).isPresent());
+        // 同一 id 再建一次不该覆盖，也不该报错——顺带钉住 createIfAbsent 的语义
+        assertFalse(sessionStore.createIfAbsent(id, "别的标题", TitleSource.USER, Instant.now()));
+        assertEquals("接线测试", sessionStore.get(id).orElseThrow().title());
+
+        sessionStore.delete(id);
     }
 }
