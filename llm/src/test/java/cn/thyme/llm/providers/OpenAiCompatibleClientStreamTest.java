@@ -5,6 +5,7 @@ import cn.thyme.llm.model.LlmException;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmResponse;
 import cn.thyme.llm.model.LlmToolCall;
+import cn.thyme.llm.model.ThinkingLevel;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -65,9 +67,11 @@ class OpenAiCompatibleClientStreamTest {
     }
 
     private LlmResponse chat(List<LlmDelta> deltas) {
-        OpenAiCompatibleClient client = new OpenAiCompatibleClient(baseUrl, null);
-        LlmRequest request = LlmRequest.builder().model("test-model").addUserMessage("你好").build();
-        return client.chat(request, deltas::add);
+        return chat(LlmRequest.builder().model("test-model").addUserMessage("你好").build(), deltas);
+    }
+
+    private LlmResponse chat(LlmRequest request, List<LlmDelta> deltas) {
+        return new OpenAiCompatibleClient(baseUrl, null).chat(request, deltas::add);
     }
 
     private static String frame(String deltaJson) {
@@ -232,6 +236,47 @@ class OpenAiCompatibleClientStreamTest {
         String body = receivedBody.get();
         assertTrue(body.contains("\"stream\":true"), "请求体应带 stream=true: " + body);
         assertTrue(body.contains("include_usage"), "请求体应带 stream_options.include_usage: " + body);
+    }
+
+    /**
+     * 关掉推理必须是<b>显式下发 {@code reasoning_effort: "none"}</b>，而不是「不带这个字段」。
+     * 两者在 OpenAI 兼容协议里是两回事：不带的语义是「按模型默认走」，而推理模型的默认是开。
+     *
+     * <p>这条链路（{@code ThinkingLevel.NONE} → 请求体）曾经整段是空的：枚举里压根没有「关」
+     * 这个档位，调用方只能传 null，于是 Ollama 上的 qwen3.5 把全部 {@code max_tokens} 花在
+     * reasoning 上，{@code content} 回空串、{@code finish_reason=length}——调用方拿到一个
+     * 没有任何错误的空回答。真机上实测过：{@code reasoning_effort="none"} 才是唯一有效的关法，
+     * {@code think=false} 与 {@code chat_template_kwargs.enable_thinking} 在兼容层上都被忽略。</p>
+     */
+    @Test
+    void 关闭推理时必须显式下发none而不是省略该字段() {
+        willRespondWith(frame("{\"content\":\"好\"}") + "data: [DONE]\n\n");
+        chat(LlmRequest.builder().model("test-model").addUserMessage("你好")
+                .thinking(ThinkingLevel.NONE).build(), new ArrayList<>());
+
+        String body = receivedBody.get();
+        assertTrue(body.contains("\"reasoning_effort\":\"none\""),
+                "NONE 必须编码成 reasoning_effort=none: " + body);
+    }
+
+    /** 不设 thinking 就不该下发该字段：此时要的是「模型自己的默认」，不是「关」。 */
+    @Test
+    void 不设thinking时不下发reasoning_effort() {
+        willRespondWith(frame("{\"content\":\"好\"}") + "data: [DONE]\n\n");
+        chat(new ArrayList<>());
+
+        String body = receivedBody.get();
+        assertFalse(body.contains("reasoning_effort"), "未设 thinking 时不该出现该字段: " + body);
+    }
+
+    @Test
+    void 其余档位按名下发() {
+        willRespondWith(frame("{\"content\":\"好\"}") + "data: [DONE]\n\n");
+        chat(LlmRequest.builder().model("test-model").addUserMessage("你好")
+                .thinking(ThinkingLevel.HIGH).build(), new ArrayList<>());
+
+        String body = receivedBody.get();
+        assertTrue(body.contains("\"reasoning_effort\":\"high\""), "HIGH 应编码成 high: " + body);
     }
 
     @Test

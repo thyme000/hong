@@ -64,9 +64,11 @@ public class StreamingAgentController {
     /**
      * 提交一条任务并以 SSE 流式返回。
      *
-     * <p>body 可带 {@code thinking}（{@code low} / {@code medium} / {@code high}）：
-     * 由调用方按轮次决定是否开启深度思考，缺省或不认识的值都表示关闭——不加部署级
-     * 开关，因为同一次部署里不同请求的取值本就不同。</p>
+     * <p>body 可带 {@code thinking}（{@code none} / {@code low} / {@code medium} /
+     * {@code high}）：由调用方按轮次决定深度思考档位。<b>缺省与不认识的值都是
+     * {@code none}，即显式关闭</b>——不下发该参数并不等于关闭，只会让模型按自己的
+     * 默认走，而推理模型的默认是开。不加部署级开关，因为同一次部署里不同请求的取值
+     * 本就不同。</p>
      */
     @PostMapping(value = "/agent/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@RequestBody Map<String, String> body) {
@@ -130,14 +132,18 @@ public class StreamingAgentController {
 
     private static ThinkingLevel parseThinking(String raw) {
         if (raw == null || raw.isBlank()) {
-            return null;
+            // 缺省给 NONE（显式关闭）而不是 null（不下发）：本接口的契约是「由调用方
+            // 决定是否开启深度思考」，所以默认必须是关。返回 null 只是让模型按自己的
+            // 默认走，而推理模型的默认是开——那样「缺省即关闭」这句注释就是假的，
+            // 用户还会遇到「思考吃光 max_tokens、content 返回空串」这种无声故障
+            return ThinkingLevel.NONE;
         }
         try {
             return ThinkingLevel.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
             // 不认识的档位按「关闭」处理而不是报错：思考只是可选增强，
             // 为一个拼写问题让整轮对话失败不划算
-            return null;
+            return ThinkingLevel.NONE;
         }
     }
 }

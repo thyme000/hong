@@ -5,6 +5,7 @@ import cn.thyme.agent.PromptTemplate;
 import cn.thyme.llm.LlmClient;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmResponse;
+import cn.thyme.llm.model.ThinkingLevel;
 import cn.thyme.memory.SessionTitle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +73,11 @@ public class TitleGenerator {
                     .addUserMessage("请生成标题。")
                     .temperature(TEMPERATURE)
                     .maxTokens(MAX_TOKENS)
+                    // NONE 是显式下发 reasoning_effort=none，不是「不设置」。
+                    // 不设该字段模型会按自己的默认走，而推理模型的默认是开：
+                    // 64 个 token 全被 reasoning 吃掉，content 回空串、finish_reason=length，
+                    // 于是这里静默拿到 null 并永远保留占位标题
+                    .thinking(ThinkingLevel.NONE)
                     .build());
         } catch (RuntimeException e) {
             log.warn("标题生成调用失败: {}", e.getMessage());

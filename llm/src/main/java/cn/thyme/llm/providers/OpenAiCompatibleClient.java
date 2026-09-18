@@ -259,6 +259,11 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     private static String toReasoningEffort(ThinkingLevel level) {
         return switch (level) {
+            // "none" 是 Ollama 实测唯一能真正关掉思考的取值：think=false、
+            // chat_template_kwargs.enable_thinking 在 OpenAI 兼容层上都被忽略，
+            // 而给 "low" 仍然会推理并吃光 max_tokens。不设该字段也不是关闭，
+            // 只是让模型按默认走——qwen3.5 的默认是开
+            case NONE -> "none";
             case LOW -> "low";
             case MEDIUM -> "medium";
             case HIGH -> "high";

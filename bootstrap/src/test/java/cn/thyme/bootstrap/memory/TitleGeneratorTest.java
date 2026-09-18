@@ -4,6 +4,7 @@ import cn.thyme.agent.PromptTemplate;
 import cn.thyme.llm.LlmClient;
 import cn.thyme.llm.model.LlmRequest;
 import cn.thyme.llm.model.LlmResponse;
+import cn.thyme.llm.model.ThinkingLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -71,7 +72,7 @@ class TitleGeneratorTest {
     }
 
     @Test
-    @DisplayName("请求参数：复用主 agent 的模型、低温度、不设思考")
+    @DisplayName("请求参数：复用主 agent 的模型、低温度、显式关闭推理")
     void requestUsesStableParameters() {
         RecordingClient client = new RecordingClient("标题");
         generator(client).generate("提问", "回答");
@@ -83,7 +84,10 @@ class TitleGeneratorTest {
         assertEquals("fake-model", request.model());
         assertEquals(0.2, request.temperature());
         assertEquals(64, request.maxTokens());
-        assertNull(request.thinking(), "标题不需要推理");
+        // 必须是 NONE 而不是 null：null 只是不下发 reasoning_effort，模型于是按自己的
+        // 默认走，而 qwen3.5 的默认是开——64 个 token 全被 reasoning 吃掉，
+        // content 回空串，这里静默拿到 null，会话标题永远停在占位版
+        assertEquals(ThinkingLevel.NONE, request.thinking(), "标题生成必须显式关闭推理");
         assertTrue(request.tools().isEmpty(), "标题生成不该挂工具");
         assertEquals(2, request.messages().size(), "system + user 两条");
     }
