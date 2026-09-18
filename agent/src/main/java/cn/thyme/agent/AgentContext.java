@@ -22,13 +22,18 @@ import java.util.UUID;
  * </ul>
  * 不显式设置时 workspaceSessionId 跟随 sessionId（顶层运行的常见情形）。
  *
+ * <p>{@code parentSessionId} 是<b>归属</b>指针：委派产生的子运行据此记下自己属于谁，
+ * 删除主会话时才能连带清掉整棵子树。只在委派的子上下文里设置；顶层运行恒为 null，
+ * 不在这里把「顶层」填成自身 id——那只是把一个没有父子关系的值伪装成有关系，
+ * 消费方（历史落库）会因此给每条顶层消息写一个毫无意义的 parent 字段。</p>
+ *
  * <p>另有两个<b>按次运行</b>而非按 agent 配置的开关：{@code listeners} 让某一次运行
  * 只发给特定监听器（流式端点据此把事件推给本次请求的连接），{@code thinking} 由调用方
  * 按轮次决定是否开启深度思考。二者都放在 context 而不是 {@link AgentConfig}——同一次
  * 部署里不同请求的取值本就不同，配置项表达不了。</p>
  */
 public record AgentContext(String global, String task, List<LlmMessage> history,
-                           String sessionId, String workspaceSessionId,
+                           String sessionId, String workspaceSessionId, String parentSessionId,
                            List<AgentListener> listeners, ThinkingLevel thinking) {
 
     public AgentContext {
@@ -40,9 +45,9 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
         listeners = listeners == null ? List.of() : List.copyOf(listeners);
     }
 
-    /** 只有会话 id 的简写：工作区随之，监听器用全局，思考关闭。 */
+    /** 只有会话 id 的简写：工作区随之，无父级，监听器用全局，思考关闭。 */
     public AgentContext(String global, String task, List<LlmMessage> history, String sessionId) {
-        this(global, task, history, sessionId, sessionId, null, null);
+        this(global, task, history, sessionId, sessionId, null, null, null);
     }
 
     public static Builder builder() {
@@ -55,6 +60,7 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
         private final List<LlmMessage> history = new ArrayList<>();
         private String sessionId;
         private String workspaceSessionId;
+        private String parentSessionId;
         private List<AgentListener> listeners;
         private ThinkingLevel thinking;
 
@@ -94,6 +100,12 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
             return this;
         }
 
+        /** 父会话 id（委派的子运行才设）；不设表示顶层运行。 */
+        public Builder parentSessionId(String parentSessionId) {
+            this.parentSessionId = parentSessionId;
+            return this;
+        }
+
         /** 本次运行专属的监听器；不设或传空则使用全局监听器。 */
         public Builder listeners(List<AgentListener> listeners) {
             this.listeners = listeners;
@@ -108,7 +120,7 @@ public record AgentContext(String global, String task, List<LlmMessage> history,
 
         public AgentContext build() {
             return new AgentContext(global, task, List.copyOf(history), sessionId,
-                    workspaceSessionId, listeners, thinking);
+                    workspaceSessionId, parentSessionId, listeners, thinking);
         }
     }
 }

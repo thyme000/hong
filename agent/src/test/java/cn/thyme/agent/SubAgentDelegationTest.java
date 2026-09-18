@@ -1,5 +1,8 @@
 package cn.thyme.agent;
 
+import cn.thyme.agent.event.AgentEvent;
+import cn.thyme.agent.event.AgentEventPublisher;
+import cn.thyme.agent.event.AgentListener;
 import cn.thyme.llm.LlmClient;
 import cn.thyme.llm.model.LlmDelta;
 import cn.thyme.llm.model.LlmRequest;
@@ -90,6 +93,51 @@ class SubAgentDelegationTest {
 
         assertTrue(result.content().contains("晴，25 度"), "子 agent 的结论应回传到主 agent");
         assertEquals(AgentStopReason.COMPLETED, result.stopReason());
+    }
+
+    @Test
+    void 委派产生的子运行必须带上父会话指针() {
+        // 归属关系靠这个指针建立，而不是靠 id 前缀猜。历史落库据此把子会话的
+        // 消息标记成属于主会话，删除主会话时才能连带清掉
+        List<String> subEventSessions = new java.util.ArrayList<>();
+        List<String> subEventParents = new java.util.ArrayList<>();
+        AgentListener recorder = event -> {
+            if (event instanceof AgentEvent.Message message
+                    && message.sessionId().startsWith("s1-sub-")) {
+                subEventSessions.add(message.sessionId());
+                subEventParents.add(message.parentSessionId());
+            }
+        };
+
+        // 子 agent 必须与主 agent 共用同一个发布器（线上由 AgentAutoConfiguration 接的
+        // 就是这条线），否则子运行的事件根本到不了监听器，指针也就无从观察
+        AgentEventPublisher publisher = new AgentEventPublisher(List.of(recorder));
+
+        SubAgentTool delegate = new SubAgentTool("delegate_task", "委派", budget -> new DefaultAgent(
+                AgentConfig.builder()
+                        .name("sub").llmClient(subAgentClient("晴，25 度", 70)).model("s")
+                        .systemPrompt("你是子 agent").maxTokens(1000).budget(budget)
+                        .eventPublisher(publisher).build()),
+                "");
+
+        AgentConfig mainConfig = AgentConfig.builder()
+                .name("main")
+                .llmClient(new DelegatingMainClient())
+                .model("m")
+                .systemPrompt("你是主 agent")
+                .tools(List.of(delegate))
+                .eventPublisher(publisher)
+                .maxTokens(1000)
+                .build();
+
+        new DefaultAgent(mainConfig).run(
+                AgentContext.builder().task("今天天气如何").sessionId("s1").build());
+
+        assertFalse(subEventSessions.isEmpty(), "子运行必须发出过消息事件");
+        assertEquals(List.of("s1"), subEventParents.stream().distinct().toList(),
+                "子运行事件的父指针必须指向主会话");
+        assertTrue(subEventSessions.stream().noneMatch("s1"::equals),
+                "子会话用的是派生子 id，不该与主会话 id 相同");
     }
 
     @Test

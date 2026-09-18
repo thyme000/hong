@@ -35,7 +35,7 @@ class AgentEventPublisherTest {
     }
 
     private static AgentEvent event(String sessionId) {
-        return new AgentEvent.Message(sessionId, Instant.now(), LlmRole.ASSISTANT, "x");
+        return new AgentEvent.Message(sessionId, null, Instant.now(), LlmRole.ASSISTANT, "x");
     }
 
     @Test
@@ -137,7 +137,7 @@ class AgentEventPublisherTest {
         AgentEventPublisher publisher = new AgentEventPublisher(List.of(seen::add));
 
         publisher.begin();
-        publisher.publish(new AgentEvent.Finished("s1", Instant.now(),
+        publisher.publish(new AgentEvent.Finished("s1", null, Instant.now(),
                 AgentResult.completed("答案", 1, 10, "s1")));
         publisher.end();
 

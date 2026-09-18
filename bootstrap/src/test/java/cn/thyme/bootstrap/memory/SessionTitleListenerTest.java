@@ -62,7 +62,7 @@ class SessionTitleListenerTest {
         AgentResult result = reason == AgentStopReason.COMPLETED
                 ? AgentResult.completed("答", 1, 10, sessionId)
                 : AgentResult.truncated(1, 10, reason, sessionId);
-        return new AgentEvent.Finished(sessionId, Instant.now(), result);
+        return new AgentEvent.Finished(sessionId, null, Instant.now(), result);
     }
 
     @Test
@@ -71,12 +71,12 @@ class SessionTitleListenerTest {
         RecordingService service = new RecordingService();
         SessionTitleListener listener = new SessionTitleListener(service);
 
-        listener.onEvent(new AgentEvent.Started("s1", Instant.now(), "任务"));
-        listener.onEvent(new AgentEvent.Message("s1", Instant.now(), LlmRole.USER, "提问"));
-        listener.onEvent(new AgentEvent.Message("s1", Instant.now(), LlmRole.ASSISTANT, "回答"));
-        listener.onEvent(new AgentEvent.Delta("s1", Instant.now(), "增", false));
-        listener.onEvent(new AgentEvent.ToolCall("s1", Instant.now(), "c1", "read_file", java.util.Map.of()));
-        listener.onEvent(new AgentEvent.ToolResult("s1", Instant.now(), "c1", "read_file", "ok", true));
+        listener.onEvent(new AgentEvent.Started("s1", null, Instant.now(), "任务"));
+        listener.onEvent(new AgentEvent.Message("s1", null, Instant.now(), LlmRole.USER, "提问"));
+        listener.onEvent(new AgentEvent.Message("s1", null, Instant.now(), LlmRole.ASSISTANT, "回答"));
+        listener.onEvent(new AgentEvent.Delta("s1", null, Instant.now(), "增", false));
+        listener.onEvent(new AgentEvent.ToolCall("s1", null, Instant.now(), "c1", "read_file", java.util.Map.of()));
+        listener.onEvent(new AgentEvent.ToolResult("s1", null, Instant.now(), "c1", "read_file", "ok", true));
         System.out.println("  >> 六种非 Finished 事件 -> submit 调用次数 " + service.submitted.size());
 
         assertEquals(List.of(), service.submitted, "非 Finished 事件不该触发标题生成");

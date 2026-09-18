@@ -123,8 +123,10 @@ public class AgentRun implements AgentListener {
         }
         // 立刻收尾，否则前端要等下一个增量才知道停了；而这个增量可能很久不来。
         // 此刻该运行跑到第几轮、花了多少 token 只有 agent 自己知道，这里给不出来，
-        // 所以轮次与用量都是 0——它们本来就只是展示用的参考值
-        onEvent(new AgentEvent.Finished(sessionId, Instant.now(),
+        // 所以轮次与用量都是 0——它们本来就只是展示用的参考值。
+        // parentSessionId 给 null：这是发给本连接的合成帧（只经本对象处理，不落库），
+        // 归属指针在这里没有任何消费方
+        onEvent(new AgentEvent.Finished(sessionId, null, Instant.now(),
                 AgentResult.truncated(0, 0, AgentStopReason.CANCELLED, sessionId)));
         return true;
     }

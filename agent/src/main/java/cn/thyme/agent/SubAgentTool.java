@@ -117,6 +117,9 @@ public class SubAgentTool implements Tool {
                 // 工作区仍指向父会话，否则子 agent 看不到用户上传给父会话的文件
                 .sessionId(subSessionId(context))
                 .workspaceSessionId(context == null ? null : context.sessionId())
+                // 归属指针：删除主会话时要连带清掉子会话的历史，而子会话 id 与主会话 id
+                // 之间没有可查询的关系（前缀只是命名习惯），必须显式记下来
+                .parentSessionId(context == null ? null : context.sessionId())
                 .build();
 
         AgentResult result;

@@ -43,6 +43,9 @@ public class DefaultAgent implements Agent {
                 : config.budget();
         AgentEventPublisher publisher = config.eventPublisher();
         String sessionId = context.sessionId();
+        // 归属指针随每个事件发出去：历史落库要把它写进 metadata，删除主会话时
+        // 才能按它把子会话的消息一并清掉
+        String parentSessionId = context.parentSessionId();
         // 提到 try 之外：被取消时要把「跑到第几轮」和已用预算一起回报，
         // 而这两个值本身就是 Cancel 异常带不回来的信息
         int iterations = 0;
@@ -50,7 +53,7 @@ public class DefaultAgent implements Agent {
         // 不设则沿用全局监听器
         publisher.begin(context.listeners());
         try {
-            publisher.publish(new AgentEvent.Started(sessionId, Instant.now(), context.task()));
+            publisher.publish(new AgentEvent.Started(sessionId, parentSessionId, Instant.now(), context.task()));
 
             List<LlmMessage> messages = new ArrayList<>();
             String system = buildSystem(context);
@@ -60,7 +63,7 @@ public class DefaultAgent implements Agent {
             messages.addAll(context.history());
             if (context.task() != null && !context.task().isEmpty()) {
                 messages.add(LlmMessage.user(context.task()));
-                publisher.publish(new AgentEvent.Message(sessionId, Instant.now(), LlmRole.USER, context.task()));
+                publisher.publish(new AgentEvent.Message(sessionId, parentSessionId, Instant.now(), LlmRole.USER, context.task()));
             }
 
             List<LlmToolDefinition> toolDefinitions = toToolDefinitions();
@@ -71,7 +74,7 @@ public class DefaultAgent implements Agent {
                 // 不豁免首次调用——宁可空手而回，也不发出一开始就注定超额的请求。
                 int inputTokens = estimateInputTokens(messages, toolDefinitions);
                 if (inputTokens > budget.remaining()) {
-                    return finish(publisher, sessionId,
+                    return finish(publisher, sessionId, parentSessionId,
                             AgentResult.truncated(iterations, budget.used(),
                                     AgentStopReason.INPUT_BUDGET_EXCEEDED, sessionId));
                 }
@@ -89,7 +92,7 @@ public class DefaultAgent implements Agent {
                 // 模型产出增量即转发为事件：agent 只做搬运，具体是渲染成 SSE
                 // 还是丢弃由监听器决定，本类不需要知道流式传输的存在
                 LlmResponse response = config.llmClient().chat(request, delta ->
-                        publisher.publish(new AgentEvent.Delta(sessionId, Instant.now(),
+                        publisher.publish(new AgentEvent.Delta(sessionId, parentSessionId, Instant.now(),
                                 delta.text(), delta.kind() == LlmDelta.Kind.REASONING)));
 
                 budget.spend(usageOf(response, messages));
@@ -102,8 +105,8 @@ public class DefaultAgent implements Agent {
                         throw new EmptyModelResponseException(
                                 "模型返回空内容（第 " + iterations + " 轮：既无工具调用也无文本）");
                     }
-                    publisher.publish(new AgentEvent.Message(sessionId, Instant.now(), LlmRole.ASSISTANT, content));
-                    return finish(publisher, sessionId,
+                    publisher.publish(new AgentEvent.Message(sessionId, parentSessionId, Instant.now(), LlmRole.ASSISTANT, content));
+                    return finish(publisher, sessionId, parentSessionId,
                             AgentResult.completed(content, iterations, budget.used(), sessionId));
                 }
 
@@ -112,36 +115,39 @@ public class DefaultAgent implements Agent {
                 List<LlmToolResult> results = new ArrayList<>();
                 for (LlmToolCall call : response.toolCalls()) {
                     publisher.publish(new AgentEvent.ToolCall(
-                            sessionId, Instant.now(), call.id(), call.name(), call.arguments()));
+                            sessionId, parentSessionId, Instant.now(),
+                            call.id(), call.name(), call.arguments()));
                     // 工具作用于「工作区会话」：子 agent 因此仍能看到父会话的文件；
                     // 事件与历史仍挂在 sessionId 上，保持上下文隔离
                     ToolResult result = executeTool(call, context.workspaceSessionId(), budget);
                     publisher.publish(new AgentEvent.ToolResult(
-                            sessionId, Instant.now(), call.id(), call.name(), result.text(), result.ok()));
+                            sessionId, parentSessionId, Instant.now(),
+                            call.id(), call.name(), result.text(), result.ok()));
                     results.add(new LlmToolResult(call.id(), result.text(), !result.ok()));
                 }
                 messages.add(LlmMessage.toolResult(results));
 
                 if (budget.remaining() <= 0) {
-                    return finish(publisher, sessionId, AgentResult.truncated(
+                    return finish(publisher, sessionId, parentSessionId, AgentResult.truncated(
                             iterations, budget.used(), AgentStopReason.TOKEN_BUDGET, sessionId));
                 }
             }
 
-            return finish(publisher, sessionId, AgentResult.truncated(
+            return finish(publisher, sessionId, parentSessionId, AgentResult.truncated(
                     iterations, budget.used(), AgentStopReason.MAX_ITERATIONS, sessionId));
         } catch (AgentCancelledException e) {
             // 就地转成结果而不是上抛：调用方要的是「跑到第几轮、花了多少 token」，
             // 这些值只有这里知道。半截文本天然被丢弃——中断在发布 Message 之前发生
-            return finish(publisher, sessionId, AgentResult.truncated(
+            return finish(publisher, sessionId, parentSessionId, AgentResult.truncated(
                     iterations, budget.used(), AgentStopReason.CANCELLED, sessionId));
         } finally {
             publisher.end();
         }
     }
 
-    private AgentResult finish(AgentEventPublisher publisher, String sessionId, AgentResult result) {
-        publisher.publish(new AgentEvent.Finished(sessionId, Instant.now(), result));
+    private AgentResult finish(AgentEventPublisher publisher, String sessionId,
+                               String parentSessionId, AgentResult result) {
+        publisher.publish(new AgentEvent.Finished(sessionId, parentSessionId, Instant.now(), result));
         return result;
     }
 

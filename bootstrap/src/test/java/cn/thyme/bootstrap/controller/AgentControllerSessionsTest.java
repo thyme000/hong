@@ -289,8 +289,8 @@ class AgentControllerSessionsTest {
     @DisplayName("子会话不在列表里，但按 id 仍打得开历史")
     void subSessionIsHiddenButReadable() throws Exception {
         chat("s1", "顶层会话的提问");
-        // 子会话：消息落在同一张表，但没有元信息行
-        history.onEvent(new cn.thyme.agent.event.AgentEvent.Message("s1-sub-abc", Instant.now(),
+        // 子会话：消息落在同一张表，但没有元信息行。父会话指针照真实委派的形状带上
+        history.onEvent(new cn.thyme.agent.event.AgentEvent.Message("s1-sub-abc", "s1", Instant.now(),
                 cn.thyme.llm.model.LlmRole.USER, "子会话的提问"));
 
         List<String> ids = list().stream().map(r -> (String) r.get("id")).toList();

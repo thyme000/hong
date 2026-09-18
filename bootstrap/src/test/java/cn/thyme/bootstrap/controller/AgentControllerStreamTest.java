@@ -156,9 +156,9 @@ class AgentControllerStreamTest {
     @Test
     void 工具调用与结果应各成一帧() throws Exception {
         agent.script = (context, emit) -> {
-            emit.accept(new AgentEvent.ToolCall(context.sessionId(), Instant.now(),
+            emit.accept(new AgentEvent.ToolCall(context.sessionId(), null, Instant.now(),
                     "c1", "noop", Map.of("path", "a.txt")));
-            emit.accept(new AgentEvent.ToolResult(context.sessionId(), Instant.now(),
+            emit.accept(new AgentEvent.ToolResult(context.sessionId(), null, Instant.now(),
                     "c1", "noop", "读到了", true));
             return completed(context, "好了");
         };
@@ -533,11 +533,11 @@ class AgentControllerStreamTest {
     }
 
     private static AgentEvent.Delta delta(AgentContext context, String text, boolean reasoning) {
-        return new AgentEvent.Delta(context.sessionId(), Instant.now(), text, reasoning);
+        return new AgentEvent.Delta(context.sessionId(), null, Instant.now(), text, reasoning);
     }
 
     private static AgentEvent.Message message(AgentContext context, String content) {
-        return new AgentEvent.Message(context.sessionId(), Instant.now(), LlmRole.ASSISTANT, content);
+        return new AgentEvent.Message(context.sessionId(), null, Instant.now(), LlmRole.ASSISTANT, content);
     }
 
     private static AgentResult completed(AgentContext context, String content) {
@@ -615,7 +615,7 @@ class AgentControllerStreamTest {
         }
 
         private void finish(AgentContext context, AgentResult result) {
-            publish(context, new AgentEvent.Finished(context.sessionId(), Instant.now(), result));
+            publish(context, new AgentEvent.Finished(context.sessionId(), null, Instant.now(), result));
         }
 
         boolean awaitRunDone(long seconds) {

@@ -55,7 +55,8 @@ public class ConversationHistoryListener implements AgentListener {
     @Override
     public void onEvent(AgentEvent event) {
         switch (event) {
-            case AgentEvent.Message e -> saveMessage(e.sessionId(), e.role().name(), e.content(), e.timestamp());
+            case AgentEvent.Message e -> saveMessage(e.sessionId(), e.parentSessionId(),
+                    e.role().name(), e.content(), e.timestamp());
             case AgentEvent.ToolCall e -> saveToolCall(e);
             case AgentEvent.ToolResult e -> updateToolResult(e);
             case AgentEvent.Finished e -> releaseRun(e.sessionId());
@@ -86,23 +87,34 @@ public class ConversationHistoryListener implements AgentListener {
                 .toList();
     }
 
-    /** 删除某会话的全部历史记录，返回删除条数。 */
+    /**
+     * 删除某会话的全部历史记录，<b>连同它派生的所有子会话历史</b>，返回删除条数。
+     *
+     * <p>子会话的消息挂在 {@code 主id-sub-xxxxxxxx} 上，与主会话的 id 并不相等，
+     * 所以按 {@code sessionId} 精确匹配删不到它们。归属关系由落库时写下的
+     * {@code parentSessionId} 承载（见 {@link AgentContext#parentSessionId()}），
+     * 这里按它做第二次精确匹配——只清一层，因为子 agent 不能再派生子 agent。</p>
+     */
     public int deleteSession(String sessionId) {
         int removed = store.deleteWhere(MemoryQuery.builder().eq("sessionId", sessionId).build());
+        removed += store.deleteWhere(MemoryQuery.builder().eq("parentSessionId", sessionId).build());
         counters.remove(sessionId);
         pendingToolCalls.remove(sessionId);
         return removed;
     }
 
-    private void saveMessage(String sessionId, String role, String content, Instant timestamp) {
+    private void saveMessage(String sessionId, String parentSessionId, String role,
+                             String content, Instant timestamp) {
         long seq = nextSeq(sessionId);
-        store.save(record(sessionId, seq, content, baseMetadata(sessionId, role, seq, timestamp)));
+        store.save(record(sessionId, seq, content,
+                baseMetadata(sessionId, parentSessionId, role, seq, timestamp)));
     }
 
     /** 工具调用先落库占住 seq，等结果到达后原地补全。 */
     private void saveToolCall(AgentEvent.ToolCall e) {
         long seq = nextSeq(e.sessionId());
-        Map<String, Object> metadata = baseMetadata(e.sessionId(), "TOOL_CALL", seq, e.timestamp());
+        Map<String, Object> metadata = baseMetadata(e.sessionId(), e.parentSessionId(),
+                "TOOL_CALL", seq, e.timestamp());
         metadata.put("toolCallId", e.toolCallId());
         metadata.put("toolName", e.toolName());
         store.save(record(e.sessionId(), seq, e.toolName() + " " + e.arguments(), metadata));
@@ -118,7 +130,8 @@ public class ConversationHistoryListener implements AgentListener {
         if (call == null) {
             // 没有可配对的调用（进程重启、事件乱序等）：退化为独立记录，不丢数据
             long fallback = nextSeq(e.sessionId());
-            Map<String, Object> metadata = baseMetadata(e.sessionId(), "TOOL_RESULT", fallback, e.timestamp());
+            Map<String, Object> metadata = baseMetadata(e.sessionId(), e.parentSessionId(),
+                    "TOOL_RESULT", fallback, e.timestamp());
             metadata.put("toolCallId", e.toolCallId());
             metadata.put("toolName", e.toolName());
             store.save(record(e.sessionId(), fallback, e.toolName() + " -> " + e.result(), metadata));
@@ -170,10 +183,16 @@ public class ConversationHistoryListener implements AgentListener {
         return sessionId + "--" + seq;
     }
 
-    private static Map<String, Object> baseMetadata(String sessionId, String role, long seq, Instant timestamp) {
+    private static Map<String, Object> baseMetadata(String sessionId, String parentSessionId,
+                                                    String role, long seq, Instant timestamp) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("type", TYPE_MESSAGE);
         metadata.put("sessionId", sessionId);
+        // 顶层运行没有父级，此时不写该键：一条恒为 null 的字段只会占空间，
+        // 还会让「按 parentSessionId 查」多出一堆无意义命中
+        if (parentSessionId != null && !parentSessionId.isEmpty()) {
+            metadata.put("parentSessionId", parentSessionId);
+        }
         metadata.put("role", role);
         metadata.put("seq", seq);
         metadata.put("timestamp", timestamp.toString());

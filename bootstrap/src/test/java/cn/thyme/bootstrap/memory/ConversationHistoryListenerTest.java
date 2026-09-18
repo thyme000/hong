@@ -27,19 +27,19 @@ class ConversationHistoryListenerTest {
     }
 
     private static void message(ConversationHistoryListener listener, String sessionId, LlmRole role, String text) {
-        listener.onEvent(new AgentEvent.Message(sessionId, Instant.now(), role, text));
+        listener.onEvent(new AgentEvent.Message(sessionId, null, Instant.now(), role, text));
     }
 
     private static void toolCall(ConversationHistoryListener listener, String sessionId,
                                  String callId, String toolName) {
         listener.onEvent(new AgentEvent.ToolCall(
-                sessionId, Instant.now(), callId, toolName, Map.of("path", "a.txt")));
+                sessionId, null, Instant.now(), callId, toolName, Map.of("path", "a.txt")));
     }
 
     private static void toolResult(ConversationHistoryListener listener, String sessionId,
                                    String callId, String toolName, String text, boolean ok) {
         listener.onEvent(new AgentEvent.ToolResult(
-                sessionId, Instant.now(), callId, toolName, text, ok));
+                sessionId, null, Instant.now(), callId, toolName, text, ok));
     }
 
     private static List<Long> seqs(List<MemoryRecord> records) {
@@ -216,7 +216,7 @@ class ConversationHistoryListenerTest {
         toolCall(listener, "s-1", "call-1", "read_file");
         toolResult(listener, "s-1", "call-1", "read_file", "内容", true);
         listener.onEvent(new AgentEvent.Finished(
-                "s-1", Instant.now(), AgentResult.completed("done", 1, 0, "s-1")));
+                "s-1", null, Instant.now(), AgentResult.completed("done", 1, 0, "s-1")));
 
         assertEquals(0, listener.runtimeStateSize("s-1"), "Finished 之后不应再保留该会话的运行时缓存");
 
@@ -252,5 +252,47 @@ class ConversationHistoryListenerTest {
         List<MemoryRecord> records = listener.history("s-1");
         assertEquals(1, records.size());
         assertEquals(1L, ((Number) records.get(0).metadata().get("seq")).longValue());
+    }
+
+    /** 委派产生的子会话消息：sessionId 是派生子 id，父会话指针另记。 */
+    private static void subMessage(ConversationHistoryListener listener, String sessionId,
+                                   String parentSessionId, LlmRole role, String text) {
+        listener.onEvent(new AgentEvent.Message(sessionId, parentSessionId, Instant.now(), role, text));
+    }
+
+    @Test
+    @DisplayName("子会话消息记下父会话指针，顶层消息不记")
+    void subSessionMessagesCarryParentPointer() {
+        ConversationHistoryListener listener = new ConversationHistoryListener(store());
+
+        message(listener, "s-1", LlmRole.USER, "顶层提问");
+        subMessage(listener, "s-1-sub-abcd1234", "s-1", LlmRole.USER, "子会话提问");
+
+        // 顶层不写该键：一条恒为 null 的字段会让「按 parentSessionId 查」多出一堆无意义命中
+        assertTrue(listener.history("s-1").get(0).metadata().get("parentSessionId") == null,
+                "顶层消息不该带 parentSessionId");
+        assertEquals("s-1", listener.history("s-1-sub-abcd1234").get(0)
+                .metadata().get("parentSessionId"));
+    }
+
+    @Test
+    @DisplayName("删除主会话连带清掉子会话历史——子会话 id 与主会话 id 并不相等")
+    void deleteSessionCascadesToSubSessions() {
+        ConversationHistoryListener listener = new ConversationHistoryListener(store());
+
+        message(listener, "s-1", LlmRole.USER, "要删的");
+        message(listener, "s-2", LlmRole.USER, "别人的");
+        subMessage(listener, "s-1-sub-abcd1234", "s-1", LlmRole.USER, "s-1 的子会话");
+        subMessage(listener, "s-1-sub-abcd1234", "s-1", LlmRole.ASSISTANT, "子会话的回答");
+        subMessage(listener, "s-2-sub-99999999", "s-2", LlmRole.USER, "s-2 的子会话");
+
+        int removed = listener.deleteSession("s-1");
+
+        assertEquals(3, removed, "1 条顶层 + 2 条子会话");
+        assertTrue(listener.history("s-1").isEmpty());
+        assertTrue(listener.history("s-1-sub-abcd1234").isEmpty(), "子会话历史必须一并清掉");
+        // 级联只认指针，不能误伤别的会话的子树
+        assertEquals(1, listener.history("s-2").size());
+        assertEquals(1, listener.history("s-2-sub-99999999").size(), "别人的子会话不该被删");
     }
 }
